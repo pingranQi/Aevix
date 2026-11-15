@@ -65,8 +65,9 @@ struct UniqueFd {
 
 class Logcat {
 public:
-    Logcat(JNIEnv* env, jobject thiz, jmethodID method)
-        : env_(env), thiz_(thiz), refresh_fd_method_(method) {}
+    Logcat(JNIEnv* env, jobject thiz, jmethodID method, bool modules_enabled, bool verbose_enabled)
+        : env_(env), thiz_(thiz), refresh_fd_method_(method),
+          modules_enabled_(modules_enabled), verbose_enabled_(verbose_enabled) {}
 
     [[noreturn]] void Run();
 
@@ -90,8 +91,8 @@ private:
     size_t verbose_part_ = 0;
 
     pid_t my_pid_ = getpid();
-    bool verbose_enabled_ = true;
-    bool modules_enabled_ = true;
+    bool verbose_enabled_;
+    bool modules_enabled_;
 };
 
 // 'Scatter-Gather' I/O (writev)
@@ -251,7 +252,9 @@ void Logcat::Run() {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_org_aevix_daemon_env_LogcatMonitor_runLogcat(JNIEnv* env, jobject thiz) {
+Java_org_aevix_daemon_env_LogcatMonitor_runLogcat(JNIEnv* env, jobject thiz,
+                                                               jboolean modules_enabled,
+                                                               jboolean verbose_enabled) {
     auto clazz = lsplant::JNI_GetObjectClass(env, thiz);
     auto method = lsplant::JNI_GetMethodID(env, clazz, "refreshFd", "(Z)I");
     if (!method) {
@@ -260,6 +263,6 @@ Java_org_aevix_daemon_env_LogcatMonitor_runLogcat(JNIEnv* env, jobject thiz) {
         LOGE("LogcatMonitor.refreshFd is missing; not starting the log reader");
         return;
     }
-    Logcat daemon(env, thiz, method);
+    Logcat daemon(env, thiz, method, modules_enabled == JNI_TRUE, verbose_enabled == JNI_TRUE);
     daemon.Run();
 }
