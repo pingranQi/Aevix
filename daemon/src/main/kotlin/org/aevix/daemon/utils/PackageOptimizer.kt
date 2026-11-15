@@ -2,8 +2,9 @@ package org.aevix.daemon.utils
 
 import android.os.Build
 import android.util.Log
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import org.aevix.daemon.system.packageManager
 
 /**
@@ -21,6 +22,7 @@ import org.aevix.daemon.system.packageManager
 object PackageOptimizer {
 
   private const val TAG = "AevixOptimizer"
+  private const val COMMAND_TIMEOUT_SECONDS = 120L
 
   private val backend: Backend =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
@@ -72,17 +74,41 @@ object PackageOptimizer {
   /** Android 14+: dexopt and profiles are owned by the ART Service, reachable through its shell. */
   private object ShellBackend : Backend {
     override fun clearProfiles(packageName: String): Boolean =
-        exec("cmd package art clear-app-profiles $packageName").first == 0
+        exec("cmd", "package", "art", "clear-app-profiles", packageName).first == 0
 
     override fun compile(packageName: String): Boolean {
-      val (exitCode, output) = exec("cmd package compile -m speed-profile -f $packageName")
+      val (exitCode, output) = exec("cmd", "package", "compile", "-m", "speed-profile", "-f", packageName)
       return exitCode == 0 && output.contains("Success")
     }
 
-    private fun exec(command: String): Pair<Int, String> {
-      val process = Runtime.getRuntime().exec(command)
-      val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-      return process.waitFor() to output
+    private fun exec(vararg command: String): Pair<Int, String> {
+      // Redirect both streams to a temporary file so a full stderr pipe cannot deadlock
+      // the command while waitFor() is running.
+      val outputFile = File.createTempFile("aevix-package-optimizer-", ".log")
+      try {
+        val process =
+            ProcessBuilder(*command)
+                .redirectErrorStream(true)
+                .redirectOutput(outputFile)
+                .start()
+
+        if (!process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+          process.destroy()
+          if (!process.waitFor(2, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+              throw IOException("Command did not terminate after being destroyed")
+            }
+          }
+          throw IOException("Command timed out after $COMMAND_TIMEOUT_SECONDS seconds")
+        }
+
+        return process.exitValue() to outputFile.readText()
+      } finally {
+        if (!outputFile.delete()) {
+          outputFile.deleteOnExit()
+        }
+      }
     }
   }
 
