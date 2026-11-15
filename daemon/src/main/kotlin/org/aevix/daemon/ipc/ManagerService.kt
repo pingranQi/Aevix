@@ -278,11 +278,9 @@ object ManagerService : IManagerService.Stub() {
 
   override fun getModuleScope(packageName: String) = ModuleDatabase.getModuleScope(packageName)
 
-  // Reports the setting, not the setting OR'd with the build type. It used to be
-  // `|| BuildConfig.DEBUG`, which made the value unwritable on a debug daemon: the manager could
-  // never read false, so its switch snapped back on every tap and had to be greyed out. The OR was
-  // redundant anyway — `isVerboseLogEnabled()` already defaults to true — so a debug build still
-  // logs verbosely out of the box, and now a developer can also turn it off.
+  // Report the stored preference without forcing debug builds to keep logging enabled.
+  // Debug builds default to verbose capture; the user can still turn it off and the switch reflects
+  // the persisted value rather than snapping back to the build type.
   override fun isVerboseLogEnabled() = PreferenceStore.isVerboseLogEnabled()
 
   override fun setVerboseLogEnabled(enabled: Boolean) {
