@@ -177,6 +177,12 @@ object Dex2OatServer {
             val is32Bit = header[4] == 1.toByte()
             val is64Bit = header[4] == 2.toByte()
             val isDebug = path.contains("dex2oatd")
+            val wrapperPath = if (is32Bit) WRAPPER32 else WRAPPER64
+
+            // This module may ship only one wrapper ABI. A stock compiler for an ABI without a
+            // matching wrapper is intentionally not mounted or cached, and must not make the
+            // supported ABI fail initialization.
+            if (!File(wrapperPath).isFile) return
 
             val index =
                 when {
@@ -191,7 +197,7 @@ object Dex2OatServer {
               val fd = Os.open(path, OsConstants.O_RDONLY, 0)
               try {
                 val compiler = Os.fstat(fd)
-                val wrapper = Os.stat(if (is32Bit) WRAPPER32 else WRAPPER64)
+                val wrapper = Os.stat(wrapperPath)
                 check(compiler.st_dev != wrapper.st_dev || compiler.st_ino != wrapper.st_ino) {
                   "Refusing dex2oat wrapper as stock compiler: $path"
                 }
