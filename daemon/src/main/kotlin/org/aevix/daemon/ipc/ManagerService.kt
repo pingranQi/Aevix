@@ -288,8 +288,8 @@ object ManagerService : IManagerService.Stub() {
   override fun setVerboseLogEnabled(enabled: Boolean) {
     PreferenceStore.setVerboseLog(enabled)
     if (enabled) {
-      LogcatMonitor.start()
       LogcatMonitor.startVerbose()
+      LogcatMonitor.start()
     } else {
       LogcatMonitor.stopVerbose()
     }
@@ -300,8 +300,8 @@ object ManagerService : IManagerService.Stub() {
   override fun setModuleLogEnabled(enabled: Boolean) {
     PreferenceStore.setModuleLogEnabled(enabled)
     if (enabled) {
-      LogcatMonitor.start()
       LogcatMonitor.startModules()
+      LogcatMonitor.start()
     } else {
       LogcatMonitor.stopModules()
     }
