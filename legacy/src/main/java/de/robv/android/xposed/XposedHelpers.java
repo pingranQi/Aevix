@@ -40,9 +40,30 @@ public final class XposedHelpers {
     private XposedHelpers() {
     }
 
-    private static final ConcurrentHashMap<MemberCacheKey.Field, Optional<Field>> fieldCache = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<MemberCacheKey.Method, Optional<Method>> methodCache = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<MemberCacheKey.Constructor, Optional<Constructor<?>>> constructorCache = new ConcurrentHashMap<>();
+    // ClassValue scopes reflection entries to their declaring lookup class. Unlike a
+    // process-wide map keyed by Class, these values do not keep an otherwise unreachable
+    // application ClassLoader alive.
+    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Field, Optional<Field>>> fieldCache =
+            new ClassValue<>() {
+                @Override
+                protected ConcurrentHashMap<MemberCacheKey.Field, Optional<Field>> computeValue(Class<?> type) {
+                    return new ConcurrentHashMap<>();
+                }
+            };
+    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Method, Optional<Method>>> methodCache =
+            new ClassValue<>() {
+                @Override
+                protected ConcurrentHashMap<MemberCacheKey.Method, Optional<Method>> computeValue(Class<?> type) {
+                    return new ConcurrentHashMap<>();
+                }
+            };
+    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Constructor, Optional<Constructor<?>>>> constructorCache =
+            new ClassValue<>() {
+                @Override
+                protected ConcurrentHashMap<MemberCacheKey.Constructor, Optional<Constructor<?>>> computeValue(Class<?> type) {
+                    return new ConcurrentHashMap<>();
+                }
+            };
     private static final WeakHashMap<Object, HashMap<String, Object>> additionalFields = new WeakHashMap<>();
     private static final HashMap<String, ThreadLocal<AtomicInteger>> sMethodDepth = new HashMap<>();
 
@@ -216,7 +237,7 @@ public final class XposedHelpers {
     public static Field findField(Class<?> clazz, String fieldName) {
         var key = new MemberCacheKey.Field(clazz, fieldName);
 
-        return fieldCache.computeIfAbsent(key, k -> {
+        return fieldCache.get(clazz).computeIfAbsent(key, k -> {
             try {
                 Field newField = findFieldRecursiveImpl(k.clazz, k.name);
                 newField.setAccessible(true);
@@ -438,7 +459,7 @@ public final class XposedHelpers {
     public static Method findMethodExact(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         var key = new MemberCacheKey.Method(clazz, methodName, parameterTypes, true);
 
-        return methodCache.computeIfAbsent(key, k -> {
+        return methodCache.get(clazz).computeIfAbsent(key, k -> {
             try {
                 Method method = k.clazz.getDeclaredMethod(k.name, k.parameters);
                 method.setAccessible(true);
@@ -691,7 +712,7 @@ public final class XposedHelpers {
     public static Constructor<?> findConstructorExact(Class<?> clazz, Class<?>... parameterTypes) {
         var key = new MemberCacheKey.Constructor(clazz, parameterTypes, true);
 
-        return constructorCache.computeIfAbsent(key, k -> {
+        return constructorCache.get(clazz).computeIfAbsent(key, k -> {
             try {
                 Constructor<?> constructor = k.clazz.getDeclaredConstructor(k.parameters);
                 constructor.setAccessible(true);
