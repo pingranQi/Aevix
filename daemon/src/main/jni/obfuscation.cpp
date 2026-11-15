@@ -233,7 +233,8 @@ Java_org_aevix_daemon_utils_ObfuscationManager_getSignatures(
     return *cached;
 }
 
-static int obfuscateDexBuffer(const void *dex_data, size_t size, bool api_protection) {
+static int obfuscateDexBuffer(const void *dex_data, size_t size, bool obfuscate_framework,
+                              bool api_protection) {
     dex::Reader reader{reinterpret_cast<const dex::u1 *>(dex_data), size};
     reader.CreateFullIr();
     auto ir = reader.GetIr();
@@ -247,7 +248,7 @@ static int obfuscateDexBuffer(const void *dex_data, size_t size, bool api_protec
         for (const auto &rule : rules) {
             // The API packages are left spelled out when their protection is off, which is the
             // whole point: a DEX loaded at run time has to be able to name them.
-            if (rule.api && !api_protection) continue;
+            if ((rule.api && !api_protection) || (!rule.api && !obfuscate_framework)) continue;
             if (char *p = strstr(s, rule.from.c_str())) {
                 memcpy(p, rule.to.c_str(), rule.from.length());
             }
@@ -272,6 +273,7 @@ extern "C" JNIEXPORT jobject JNICALL
 Java_org_aevix_daemon_utils_ObfuscationManager_obfuscateDex(JNIEnv *env,
                                                                     [[maybe_unused]] jclass clazz,
                                                                     jobject memory,
+                                                                    jboolean obfuscate_framework,
                                                                     jboolean api_protection) {
     ensureInitialized(env);
 
@@ -304,7 +306,7 @@ Java_org_aevix_daemon_utils_ObfuscationManager_obfuscateDex(JNIEnv *env,
 
     bool needs_obfuscation = false;
     for (const auto &rule : rules) {
-        if (rule.api && !api_protection) continue;
+        if ((rule.api && !api_protection) || (!rule.api && !obfuscate_framework)) continue;
         if (memmem(mem, size, rule.from.c_str(), rule.from.length()) != nullptr ||
             memmem(mem, size, rule.dotted_from.c_str(), rule.dotted_from.length()) != nullptr) {
             needs_obfuscation = true;
@@ -325,7 +327,7 @@ Java_org_aevix_daemon_utils_ObfuscationManager_obfuscateDex(JNIEnv *env,
     }
 
     // Process the DEX and obtain a new file descriptor for the output
-    int new_fd = obfuscateDexBuffer(mem, size, api_protection);
+    int new_fd = obfuscateDexBuffer(mem, size, obfuscate_framework, api_protection);
 
     // Safely unmap and close the input buffer mapping
     munmap(mem, size);
