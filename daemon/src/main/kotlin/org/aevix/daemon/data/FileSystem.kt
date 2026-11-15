@@ -85,6 +85,8 @@ object FileSystem {
   val dbPath: File = configDirPath.resolve("modules_config.db").toFile()
 
   @Volatile private var preloadDex: SharedMemory? = null
+  private var preloadDexObfuscate: Boolean? = null
+  private var preloadDexApiProtection: Boolean? = null
 
   private val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
   private val lockPath: Path = basePath.resolve("lock")
@@ -475,14 +477,25 @@ object FileSystem {
   @Synchronized
   fun invalidatePreloadDex() {
     preloadDex = null
+    preloadDexObfuscate = null
+    preloadDexApiProtection = null
   }
 
   @Synchronized
   fun getPreloadDex(obfuscate: Boolean, apiProtection: Boolean): SharedMemory? {
-    if (preloadDex == null) {
+    if (preloadDex == null ||
+        preloadDexObfuscate != obfuscate ||
+        preloadDexApiProtection != apiProtection) {
+      // A fork racing a settings change always receives a DEX built with the flags it snapshots.
+      // Do not close a previous SharedMemory: a Binder reply may still be parceling its descriptor.
+      preloadDex = null
+      preloadDexObfuscate = null
+      preloadDexApiProtection = null
       runCatching {
             FileInputStream("framework/aevix.dex").use {
               preloadDex = readDex(it, obfuscate, apiProtection)
+              preloadDexObfuscate = obfuscate
+              preloadDexApiProtection = apiProtection
             }
           }
           .onFailure { Log.e(TAG, "Failed to load framework dex", it) }
