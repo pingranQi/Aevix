@@ -414,18 +414,6 @@ interface IManagerService {
      */
     void setVerboseLogEnabled(boolean enabled);
 
-    /** Whether the framework's module-only log stream is being captured. */
-    boolean isModuleLogEnabled();
-
-    /** Enables or disables capture of module/Xposed-tagged lines independently of verbose logs. */
-    void setModuleLogEnabled(boolean enabled);
-
-    /** Whether Xposed API class names are protected from runtime-loaded module DEXes. */
-    boolean isApiProtectionEnabled();
-
-    /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
-    void setApiProtectionEnabled(boolean enabled);
-
     // ---- logs -------------------------------------------------------------------------------------
 
     /**
@@ -811,4 +799,17 @@ interface IManagerService {
 
     /** APatch. */
     const int ROOT_APATCH = 5;
+
+    // New methods are appended so transaction codes already used by older managers remain stable.
+    /** Whether the framework's module-only log stream is being captured. */
+    boolean isModuleLogEnabled();
+
+    /** Enables or disables capture of module/Xposed-tagged lines independently of verbose logs. */
+    void setModuleLogEnabled(boolean enabled);
+
+    /** Whether Xposed API class names are protected from runtime-loaded module DEXes. */
+    boolean isApiProtectionEnabled();
+
+    /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
+    void setApiProtectionEnabled(boolean enabled);
 }
