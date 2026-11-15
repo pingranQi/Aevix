@@ -6,12 +6,16 @@ object ObfuscationManager {
   /**
    * Rewrites the prefixes this boot's table covers, in a DEX already mapped into [memory].
    *
-   * [apiProtection] selects whether the Xposed API packages are among them. Off, the framework's
-   * own names are still renamed — a module compiled against the API is unaffected either way,
-   * because its DEX is rewritten with the same table — but the API packages keep their real names,
-   * so code that loads a DEX at run time can still find them.
+   * [obfuscateFramework] controls the framework's own prefixes; [apiProtection] independently
+   * controls the Xposed API prefixes. API protection can therefore be enabled without changing
+   * general framework-name obfuscation.
    */
-  @JvmStatic external fun obfuscateDex(memory: SharedMemory, apiProtection: Boolean): SharedMemory
+  @JvmStatic
+  external fun obfuscateDex(
+      memory: SharedMemory,
+      obfuscateFramework: Boolean,
+      apiProtection: Boolean
+  ): SharedMemory
 
   /** The prefix table in effect, dotted form to dotted form, for the same [apiProtection] answer. */
   @JvmStatic external fun getSignatures(apiProtection: Boolean): Map<String, String>
