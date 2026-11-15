@@ -30,6 +30,10 @@ const val PER_USER_RANGE = 100000
  */
 const val FIRST_APPLICATION_UID = 10000
 
+/** UID app-id bounds used by app-zygote and isolated services. */
+const val FIRST_APP_ZYGOTE_ISOLATED_UID = 90000
+const val LAST_ISOLATED_UID = 99999
+
 /** Android 17 Private Compute Core app-id range (Process.FIRST_PCC_UID..LAST_PCC_UID). */
 const val FIRST_PCC_UID = 30000
 const val LAST_PCC_UID = 39999
