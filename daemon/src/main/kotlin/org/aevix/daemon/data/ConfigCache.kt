@@ -39,6 +39,9 @@ object ConfigCache {
   // Absent means the module places no restriction on its scope.
   @Volatile private var staticScopes: Map<String, Set<String>> = emptyMap()
 
+  // Only database-backed scope rows may be inherited by isolated service processes.
+  @Volatile private var explicitScopes: Map<ProcessScope, List<LoadedModule>> = emptyMap()
+
   /** The packages [modulePackage] claims, or null when it does not fix its scope. */
   fun staticScopeOf(modulePackage: String): Set<String>? = staticScopes[modulePackage]
 
@@ -334,12 +337,19 @@ object ConfigCache {
       }
 
       val newScopes = mutableMapOf<ProcessScope, MutableList<LoadedModule>>()
+      val newExplicitScopes = mutableMapOf<ProcessScope, MutableList<LoadedModule>>()
 
       // A module can reach the same process by more than one route: self rows in two users each
       // propagate into the other's, and the scope derived below can name a process a row named as
       // well. Twice in the list is twice loaded, so every insertion goes through here.
       fun addToScope(processName: String, uid: Int, module: LoadedModule) {
         val modules = newScopes.getOrPut(ProcessScope(processName, uid)) { mutableListOf() }
+        if (modules.none { it === module }) modules.add(module)
+      }
+
+      // Unlike the full runtime map, this table excludes derived legacy self-scope entries.
+      fun addToExplicitScope(processName: String, uid: Int, module: LoadedModule) {
+        val modules = newExplicitScopes.getOrPut(ProcessScope(processName, uid)) { mutableListOf() }
         if (modules.none { it === module }) modules.add(module)
       }
 
@@ -380,6 +390,7 @@ object ConfigCache {
 
         for (processName in processNames) {
           addToScope(processName, appUid, module)
+          addToExplicitScope(processName, appUid, module)
 
           // A module in its own scope hooks itself in every user that has it — the copies share
           // one APK, so what one copy hooks in itself the others may expect too. Over the users
@@ -436,6 +447,7 @@ object ConfigCache {
         // belong to become visible together. Between the two assignments a reader could see the new
         // static scopes against the old module set.
         staticScopes = newStaticScopes
+        explicitScopes = newExplicitScopes.mapValues { (_, modules) -> modules.toList() }
       }
 
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
@@ -467,7 +479,7 @@ object ConfigCache {
       return emptyList()
     }
     val requested = ProcessScope(processName, uid)
-    val match = resolveProcessScope(state.scopes, requested) ?: return emptyList()
+    val match = resolveProcessScope(state.scopes, requested, explicitScopes) ?: return emptyList()
     if (match.scope.processName != requested.processName) {
       Log.i(
           TAG,
@@ -616,6 +628,6 @@ object ConfigCache {
 
   fun shouldSkipProcess(scope: ProcessScope): Boolean {
     ensureCacheReady()
-    return resolveProcessScope(state.scopes, scope) == null
+    return resolveProcessScope(state.scopes, scope, explicitScopes) == null
   }
 }
