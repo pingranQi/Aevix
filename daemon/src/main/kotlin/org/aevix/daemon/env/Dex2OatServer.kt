@@ -181,6 +181,10 @@ object Dex2OatServer {
             }
 
             if (index != -1 && dex2oatArray[index] == null) {
+              // Retain the candidate path even on failure: start() uses it to unmount a stale
+              // wrapper mount before closing descriptors.
+              assignedIndex = index
+              dex2oatArray[index] = path
               val wrapperPath = if (index < 2) WRAPPER32 else WRAPPER64
               val wrapper = try {
                 Os.stat(wrapperPath)
@@ -189,13 +193,13 @@ object Dex2OatServer {
                 // unsupported 32-bit APEX binary disable the supported 64-bit wrapper.
                 if (index < 2 && error.errno == OsConstants.ENOENT) {
                   Log.i(TAG, "Skipping $path: optional 32-bit wrapper is not shipped")
+                  dex2oatArray[index] = null
+                  assignedIndex = -1
                   return@use
                 }
                 throw error
               }
 
-              assignedIndex = index
-              dex2oatArray[index] = path
               val fd = Os.open(path, OsConstants.O_RDONLY, 0)
               try {
                 // On a daemon restart the bind mount may still point at our wrapper. Compare
@@ -222,7 +226,6 @@ object Dex2OatServer {
                   .onFailure { Log.w(TAG, "Failed to close the descriptor for $path", it) }
             }
             fdArray[assignedIndex] = null
-            dex2oatArray[assignedIndex] = null
           }
           Log.e(TAG, "Cannot safely open stock dex2oat binary at $path", error)
         }
