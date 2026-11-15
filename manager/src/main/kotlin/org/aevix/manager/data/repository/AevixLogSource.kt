@@ -59,7 +59,7 @@ class AevixLogSource : LogSource {
 
     override suspend fun setModuleLogEnabled(enabled: Boolean): Boolean {
         daemon.setModuleLogEnabled(enabled)
-        return daemon.isModuleLogEnabled().getOrDefault(enabled)
+        return daemon.isModuleLogEnabled().getOrDefault(false)
     }
 
     override val canConfigureApiProtection: Boolean = true
