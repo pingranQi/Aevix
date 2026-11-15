@@ -75,11 +75,25 @@ object ConfigCache {
           Log.i(TAG, "System services are ready. Mapping modules and scopes.")
           updateManager(false)
           setupMiscPath()
+          state = state.copy(isApiProtectionEnabled = PreferenceStore.isApiProtectionEnabled())
           performCacheUpdate()
           synchronized(this) { state = state.copy(isCacheReady = true) }
         }
       }
     }
+  }
+
+  fun updateApiProtectionEnabled(enabled: Boolean) {
+    PreferenceStore.setApiProtectionEnabled(enabled)
+    ensureCacheReady()
+    synchronized(this) { state = state.copy(isApiProtectionEnabled = enabled) }
+    requestCacheUpdate()
+  }
+
+  /** Read the persisted switch before the framework DEX and module cache are first built. */
+  fun loadPersistentSettings() {
+    val enabled = PreferenceStore.isApiProtectionEnabled()
+    synchronized(this) { state = state.copy(isApiProtectionEnabled = enabled) }
   }
 
   fun updateManager(uninstalled: Boolean) {
