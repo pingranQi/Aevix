@@ -67,7 +67,7 @@ class Logcat {
 public:
     Logcat(JNIEnv* env, jobject thiz, jmethodID method, bool modules_enabled, bool verbose_enabled)
         : env_(env), thiz_(thiz), refresh_fd_method_(method),
-          modules_enabled_(modules_enabled), verbose_enabled_(verbose_enabled) {}
+          verbose_enabled_(verbose_enabled), modules_enabled_(modules_enabled) {}
 
     [[noreturn]] void Run();
 
