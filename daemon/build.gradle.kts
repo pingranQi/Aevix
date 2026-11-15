@@ -146,6 +146,7 @@ androidComponents {
 }
 
 dependencies {
+  testImplementation("junit:junit:4.13.2")
   implementation(libs.agp.apksig)
   implementation(libs.gson)
   implementation(libs.picocli)
