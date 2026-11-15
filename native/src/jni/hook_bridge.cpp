@@ -107,14 +107,16 @@ bool RefreshCallbackSnapshot(JNIEnv *env, HookItem *item) {
     }
 
     jobjectArray result = env->NewObjectArray(2, object_array_class, nullptr);
-    jobjectArray modern = result
-        ? env->NewObjectArray(static_cast<jsize>(item->modern_callbacks.size()),
-                              item->callback_class, nullptr)
-        : nullptr;
-    jobjectArray legacy = result
-        ? env->NewObjectArray(static_cast<jsize>(item->legacy_callbacks.size()),
-                              object_class, nullptr)
-        : nullptr;
+    jobjectArray modern = nullptr;
+    jobjectArray legacy = nullptr;
+    if (result && !env->ExceptionCheck()) {
+        modern = env->NewObjectArray(static_cast<jsize>(item->modern_callbacks.size()),
+                                     item->callback_class, nullptr);
+    }
+    if (modern && !env->ExceptionCheck()) {
+        legacy = env->NewObjectArray(static_cast<jsize>(item->legacy_callbacks.size()),
+                                     object_class, nullptr);
+    }
 
     bool ok = result && modern && legacy && !env->ExceptionCheck();
     if (ok) {
