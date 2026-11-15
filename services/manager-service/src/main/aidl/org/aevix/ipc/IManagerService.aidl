@@ -396,8 +396,8 @@ interface IManagerService {
     void setStatusNotificationEnabled(boolean enabled);
 
     /**
-     * Whether the daemon is capturing the verbose log. True on a device where nobody has said
-     * otherwise.
+     * Whether the daemon is capturing the verbose log. Defaults to on for debug builds and
+     * off for release builds until the user changes it.
      *
      * <p>The stored value, not the value or'd with the build type. It used to be the latter, which
      * made the setting unwritable on a debug daemon: the manager could never read false, so its
