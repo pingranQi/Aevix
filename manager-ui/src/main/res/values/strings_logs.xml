@@ -64,6 +64,10 @@
     <!-- Verbose logging -->
     <string name="logs_verbose_switch">Verbose logging</string>
     <string name="logs_verbose_enforced">The running daemon is forcing this on regardless.</string>
+    <string name="logs_module_switch">Module logging</string>
+    <string name="logs_module_summary">Capture only module and Xposed framework log tags. This stream is separate from verbose system diagnostics.</string>
+    <string name="logs_api_protection_switch">API call protection</string>
+    <string name="logs_api_protection_summary">Rename Xposed API classes in the framework and module DEXes to block runtime-loaded code from resolving them. Modules using dynamically loaded hook classes may stop working.</string>
 
     <!-- Navigation within a long log -->
     <string name="logs_jump_oldest">Jump to the oldest line</string>
