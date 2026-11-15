@@ -249,7 +249,9 @@ object FileSystem {
     Channels.newChannel(inputStream).read(byteBuffer)
     SharedMemory.unmap(byteBuffer)
 
-    if (obfuscate) {
+    if (obfuscate || apiProtection) {
+      // API protection is an independent switch: it must rewrite Xposed API names even when
+      // general framework-name obfuscation is disabled (for example, in a debug build).
       val newMemory = ObfuscationManager.obfuscateDex(memory, apiProtection)
       if (memory !== newMemory) {
         memory.close()
