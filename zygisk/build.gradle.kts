@@ -162,7 +162,19 @@ abstract class PrepareFrameworkDex : DefaultTask() {
             dexFiles.single()
         }
 
+        val inputClasses = inputs.flatMap { input ->
+            DexFileFactory.loadDexFile(input, Opcodes.forApi(minSdk.get())).classes.map { it.type }
+        }
+        check(inputClasses.size == inputClasses.toSet().size) {
+            "Framework APK contains duplicate DEX class definitions"
+        }
         val classes = DexFileFactory.loadDexFile(candidate, Opcodes.forApi(minSdk.get())).classes
+        val outputClasses = classes.map { it.type }.toSet()
+        check(outputClasses == inputClasses.toSet()) {
+            "Merged framework DEX class mismatch: missing=" +
+                (inputClasses.toSet() - outputClasses) + ", extra=" +
+                (outputClasses - inputClasses.toSet())
+        }
         val recordTag = "Lcom/android/tools/r8/RecordTag;"
         check(classes.none { it.superclass == recordTag } || classes.any { it.type == recordTag }) {
             "Framework DEX references RecordTag without defining it; D8 global synthetics were lost"
