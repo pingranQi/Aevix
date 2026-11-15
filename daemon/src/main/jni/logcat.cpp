@@ -91,6 +91,7 @@ private:
 
     pid_t my_pid_ = getpid();
     bool verbose_enabled_ = true;
+    bool modules_enabled_ = true;
 };
 
 // 'Scatter-Gather' I/O (writev)
@@ -123,7 +124,7 @@ size_t Logcat::FastWrite(const AndroidLogEntry& entry, int fd) {
 
 void Logcat::LogRaw(std::string_view str) {
     if (verbose_enabled_ && verbose_fd_ >= 0) write(verbose_fd_, str.data(), str.size());
-    if (modules_fd_ >= 0) write(modules_fd_, str.data(), str.size());
+    if (modules_enabled_ && modules_fd_ >= 0) write(modules_fd_, str.data(), str.size());
 }
 
 // RefreshFd: Handshakes with the Kotlin layer to swap file descriptors.
@@ -180,7 +181,7 @@ void Logcat::ProcessBuffer(struct log_msg* buf) {
 
     // Check if tag is in the Module list
     bool is_module = std::binary_search(kModuleTags.begin(), kModuleTags.end(), tag);
-    if (is_module) {
+    if (is_module && modules_enabled_) {
         modules_written_ += FastWrite(entry, modules_fd_);
     }
 
@@ -196,7 +197,12 @@ void Logcat::ProcessBuffer(struct log_msg* buf) {
     // Feedback Loop: The daemon listens to its own Logcat output for remote commands.
     if (entry.pid == my_pid_ && tag == "AevixLogcat"sv) {
         std::string_view msg(entry.message, entry.messageLen);
-        if (msg == "!!start_verbose!!"sv) {
+        if (msg == "!!start_modules!!"sv) {
+            modules_enabled_ = true;
+            modules_written_ += FastWrite(entry, modules_fd_);
+        } else if (msg == "!!stop_modules!!"sv) {
+            modules_enabled_ = false;
+        } else if (msg == "!!start_verbose!!"sv) {
             verbose_enabled_ = true;
             verbose_written_ += FastWrite(entry, verbose_fd_);
         } else if (msg == "!!stop_verbose!!"sv) {
