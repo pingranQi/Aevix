@@ -52,6 +52,26 @@ class AevixLogSource : LogSource {
         return daemon.isVerboseLogEnabled().getOrDefault(enabled)
     }
 
+    override val canConfigureModuleLog: Boolean = true
+
+    override suspend fun isModuleLogEnabled(): Boolean =
+        daemon.isModuleLogEnabled().getOrDefault(false)
+
+    override suspend fun setModuleLogEnabled(enabled: Boolean): Boolean {
+        daemon.setModuleLogEnabled(enabled)
+        return daemon.isModuleLogEnabled().getOrDefault(false)
+    }
+
+    override val canConfigureApiProtection: Boolean = true
+
+    override suspend fun isApiProtectionEnabled(): Boolean =
+        daemon.isApiProtectionEnabled().getOrDefault(false)
+
+    override suspend fun setApiProtectionEnabled(enabled: Boolean): Boolean {
+        daemon.setApiProtectionEnabled(enabled)
+        return daemon.isApiProtectionEnabled().getOrDefault(enabled)
+    }
+
     override val canSaveArchive: Boolean = true
     override val archiveMimeType: String = "application/zip"
 

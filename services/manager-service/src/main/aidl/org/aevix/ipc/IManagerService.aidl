@@ -396,8 +396,8 @@ interface IManagerService {
     void setStatusNotificationEnabled(boolean enabled);
 
     /**
-     * Whether the daemon is capturing the verbose log. True on a device where nobody has said
-     * otherwise.
+     * Whether the daemon is capturing the verbose log. Defaults to on for debug builds and
+     * off for release builds until the user changes it.
      *
      * <p>The stored value, not the value or'd with the build type. It used to be the latter, which
      * made the setting unwritable on a debug daemon: the manager could never read false, so its
@@ -799,4 +799,17 @@ interface IManagerService {
 
     /** APatch. */
     const int ROOT_APATCH = 5;
+
+    // New methods are appended so transaction codes already used by older managers remain stable.
+    /** Whether the framework's module-only log stream is being captured. */
+    boolean isModuleLogEnabled();
+
+    /** Enables or disables capture of module/Xposed-tagged lines independently of verbose logs. */
+    void setModuleLogEnabled(boolean enabled);
+
+    /** Whether Xposed API class names are protected from runtime-loaded module DEXes. */
+    boolean isApiProtectionEnabled();
+
+    /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
+    void setApiProtectionEnabled(boolean enabled);
 }

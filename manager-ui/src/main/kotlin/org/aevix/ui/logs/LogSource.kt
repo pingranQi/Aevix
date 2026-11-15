@@ -77,6 +77,22 @@ interface LogSource {
     /** Writes the preference and returns the value the host reports afterwards. */
     suspend fun setVerboseEnabled(enabled: Boolean): Boolean
 
+    /** Whether this host can independently enable or disable its module-only log stream. */
+    val canConfigureModuleLog: Boolean
+        get() = false
+
+    suspend fun isModuleLogEnabled(): Boolean = false
+
+    suspend fun setModuleLogEnabled(enabled: Boolean): Boolean = false
+
+    /** Whether this host exposes the framework's Xposed API call-protection switch. */
+    val canConfigureApiProtection: Boolean
+        get() = false
+
+    suspend fun isApiProtectionEnabled(): Boolean = false
+
+    suspend fun setApiProtectionEnabled(enabled: Boolean): Boolean = false
+
     // --- Export --------------------------------------------------------------------------------
 
     val canSaveArchive: Boolean

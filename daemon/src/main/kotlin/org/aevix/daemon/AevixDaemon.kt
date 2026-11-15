@@ -115,13 +115,7 @@ object AevixDaemon {
     // FrameworkService for our Zygisk module during system_server specialization.
     SystemServerService.registerProxyService(proxyServiceName)
 
-    // Start Environmental Daemons
-    // Only a debug build starts the reader here. A release install gets one when verbose logging
-    // is turned on (see ManagerService.setVerboseLog), and until then nothing reads the module log:
-    // the thread is cheap but never idle, and the files it writes leave the device only inside a
-    // bug report. Deliberately not consulting the preference here -- reading it opens the config
-    // database, and that first open has to stay where it has always been, on the line that runs
-    // before the main thread drops root.
+    // Start Environmental Daemons.
     // Wrapped, each of them: an exception here used to reach the uncaught handler and exit the
     // whole daemon, so a failure in the dex2oat socket loop cost the manager as well. One
     // subsystem failing should cost that subsystem.
@@ -131,20 +125,13 @@ object AevixDaemon {
     // LogcatMonitor first is what stopped the daemon from starting at all on a release build.
     runCatching { LogcatMonitor.prepare() }
         .onFailure { Log.e(TAG, "Logcat monitor failed to initialise", it) }
-    runCatching { if (BuildConfig.DEBUG) LogcatMonitor.start() }
-        .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
+
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       runCatching { Dex2OatServer.start() }
           .onFailure { Log.e(TAG, "dex2oat server failed to start", it) }
     }
     runCatching { CliSocketServer.start() }
         .onFailure { Log.e(TAG, "CLI socket failed to start", it) }
-
-    // Preload Framework DEX in the background
-    scope.launch {
-      FileSystem.getPreloadDex(
-          ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
-    }
 
     // Initializes system frameworks inside the daemon process
     ActivityThread.systemMain()
@@ -160,19 +147,26 @@ object AevixDaemon {
 
     applyNotificationWorkaround()
 
-    // Read this before `sendToBridge`, which leaves the main thread at euid 1000: the config
-    // database lives under a directory only root can enter, so the first process to open it has
-    // to do so while we still have root. On a successful injection a binder thread opens it for
-    // us during specialization, but when the injection fails nothing else has, and the daemon
-    // used to die here on an unreadable preference.
+    // Read root-only preferences after system services are ready but before sendToBridge drops
+    // the main thread's privileges. Start the native reader only after its independent streams
+    // have been configured, and preload the framework DEX with the matching protection mode.
+    runCatching { ConfigCache.loadPersistentSettings() }
+        .onFailure { Log.e(TAG, "Failed to load framework protection settings", it) }
     val isVerboseLog = ManagerService.isVerboseLogEnabled()
+    val isModuleLog = ManagerService.isModuleLogEnabled()
+    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
+    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
+    if (isVerboseLog || isModuleLog) {
+      runCatching { LogcatMonitor.start() }
+          .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
+    }
+    scope.launch {
+      FileSystem.getPreloadDex(
+          ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
+    }
 
     // Setup IPC channel for applications by injecting DaemonService binder
     sendToBridge(AevixService.asBinder(), false)
-
-    if (!isVerboseLog) {
-      LogcatMonitor.stopVerbose()
-    }
 
     Looper.loop()
     throw RuntimeException("Main thread loop unexpectedly exited")

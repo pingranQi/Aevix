@@ -224,6 +224,18 @@ class FakeManagerService(
         real?.setVerboseLogEnabled(enabled)
     }
 
+    override fun isModuleLogEnabled(): Boolean = real?.isModuleLogEnabled ?: false
+
+    override fun setModuleLogEnabled(enabled: Boolean) {
+        real?.setModuleLogEnabled(enabled)
+    }
+
+    override fun isApiProtectionEnabled(): Boolean = real?.isApiProtectionEnabled ?: false
+
+    override fun setApiProtectionEnabled(enabled: Boolean) {
+        real?.setApiProtectionEnabled(enabled)
+    }
+
     override fun getLiveLogPart(verbose: Boolean): ParcelFileDescriptor? =
         real?.getLiveLogPart(verbose)
 

@@ -224,21 +224,24 @@ object FrameworkService : IFrameworkService.Stub() {
   /**
    * The obfuscation map, as `count then key/value pairs` at the current position of [reply].
    *
-   * Entries are exactly the prefixes the API protection switch covers: with it off, the API
-   * packages are absent rather than mapped to themselves, which is what a caller needs — a name
-   * that is not in the table was not rewritten, so it resolves as written. Values are the names
-   * drawn this boot.
+   * The table always includes general framework prefixes and includes Xposed API prefixes
+   * only when API protection is enabled. The caller can therefore distinguish a name that was
+   * left untouched from one rewritten for this boot. Values are the names drawn this boot.
    *
-   * With DEX obfuscation off nothing was renamed at all, so every value collapses to its key and a
-   * caller can still rewrite unconditionally.
+   * The map is filtered by the two switches independently: general prefixes follow DEX
+   * obfuscation, while Xposed API prefixes follow API protection.
    */
-  private fun writeObfuscationMap(reply: Parcel) {
-    val state = ConfigCache.state
-    val signatures = ObfuscationManager.getSignatures(state.isApiProtectionEnabled)
+  private fun writeObfuscationMap(reply: Parcel, dexObfuscate: Boolean, apiProtection: Boolean) {
+    val signatures = ObfuscationManager.getSignatures(apiProtection)
     reply.writeInt(signatures.size * 2)
     for ((key, value) in signatures) {
       reply.writeString(key)
-      reply.writeString(if (state.isDexObfuscateEnabled) value else key)
+      val isApiPrefix =
+          key.startsWith("de.robv.android.xposed.") ||
+              key.startsWith("io.github.libxposed.api.Xposed")
+      val shouldRename =
+          if (isApiPrefix) apiProtection else dexObfuscate
+      reply.writeString(if (shouldRename) value else key)
     }
   }
 
@@ -256,12 +259,17 @@ object FrameworkService : IFrameworkService.Stub() {
         // asks for them back to back, so the map was a second round trip for an answer this one
         // already had. A client that predates the append stops reading after the size, which is why
         // this can be added without taking the separate transaction away.
-        reply?.let { writeObfuscationMap(it) }
+        reply?.let {
+          writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
+        }
         return true
       }
       OBFUSCATION_MAP_TRANSACTION_CODE -> {
+        val state = ConfigCache.state
         reply?.writeNoException()
-        reply?.let { writeObfuscationMap(it) }
+        reply?.let {
+          writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
+        }
         return true
       }
     }

@@ -101,6 +101,18 @@ object PreferenceStore {
   fun setVerboseLog(enabled: Boolean) =
       updateModulePref("lspd", 0, "config", "enable_verbose_log", enabled)
 
+  fun isModuleLogEnabled(): Boolean =
+      getModulePrefs("lspd", 0, "config")["enable_module_log"] as? Boolean ?: BuildConfig.DEBUG
+
+  fun setModuleLogEnabled(enabled: Boolean) =
+      updateModulePref("lspd", 0, "config", "enable_module_log", enabled)
+
+  fun isApiProtectionEnabled(): Boolean =
+      getModulePrefs("lspd", 0, "config")["enable_api_protection"] as? Boolean ?: false
+
+  fun setApiProtectionEnabled(enabled: Boolean) =
+      updateModulePref("lspd", 0, "config", "enable_api_protection", enabled)
+
   fun isScopeRequestBlocked(pkg: String): Boolean =
       (getModulePrefs("lspd", 0, "config")["scope_request_blocked"] as? Set<*>)?.contains(pkg) ==
           true

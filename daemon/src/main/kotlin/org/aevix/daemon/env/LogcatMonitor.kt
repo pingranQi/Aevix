@@ -15,6 +15,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Paths
 import kotlinx.coroutines.launch
 import org.aevix.daemon.AevixDaemon
+import org.aevix.daemon.BuildConfig
 import org.aevix.daemon.data.FileSystem
 
 private const val TAG = "AevixLogcat"
@@ -28,8 +29,10 @@ object LogcatMonitor {
   private var modulesFd = -1
   private var verboseFd = -1
   @Volatile private var isRunning = false
+  @Volatile private var modulesEnabled = BuildConfig.DEBUG
+  @Volatile private var verboseEnabled = BuildConfig.DEBUG
 
-  private external fun runLogcat()
+  private external fun runLogcat(modules: Boolean, verbose: Boolean)
 
   // Thread-safe LRU implementation for log files
   private class ThreadSafeLRU(private val maxEntries: Int = 10) {
@@ -117,7 +120,9 @@ object LogcatMonitor {
     AevixDaemon.scope.launch {
       runCatching {
             Log.i(TAG, "Logcat daemon starting")
-            runLogcat() // Blocks until the native logcat process dies
+            // Pass the persisted state as native startup arguments. Logcat may not have started
+            // reading yet, so relying on a logcat sentinel here would race the reader's first read.
+            runLogcat(modulesEnabled, verboseEnabled) // Blocks until the native logcat process dies
             Log.i(TAG, "Logcat daemon stopped")
           }
           .onFailure { Log.e(TAG, "Logcat crashed", it) }
@@ -157,9 +162,25 @@ object LogcatMonitor {
         .onFailure { Log.w(TAG, "checkFd failed for $fd", it) }
   }
 
-  fun startVerbose() = Log.i(TAG, "!!start_verbose!!")
+  fun startVerbose() {
+    verboseEnabled = true
+    Log.i(TAG, "!!start_verbose!!")
+  }
 
-  fun stopVerbose() = Log.i(TAG, "!!stop_verbose!!")
+  fun stopVerbose() {
+    verboseEnabled = false
+    Log.i(TAG, "!!stop_verbose!!")
+  }
+
+  fun startModules() {
+    modulesEnabled = true
+    Log.i(TAG, "!!start_modules!!")
+  }
+
+  fun stopModules() {
+    modulesEnabled = false
+    Log.i(TAG, "!!stop_modules!!")
+  }
 
   fun refresh(isVerboseLog: Boolean) {
     Log.i(TAG, if (isVerboseLog) "!!refresh_verbose!!" else "!!refresh_modules!!")

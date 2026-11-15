@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import com.android.tools.smali.dexlib2.DexFileFactory
 import com.android.tools.smali.dexlib2.Opcodes
 import com.android.tools.smali.dexlib2.iface.ClassDef
@@ -10,6 +11,23 @@ import org.apache.commons.codec.binary.Hex
 import org.apache.tools.ant.filters.ReplaceTokens
 import org.tukaani.xz.LZMA2Options
 import org.tukaani.xz.XZOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.zip.ZipFile
+import javax.inject.Inject
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
 
 // Reading the optimised DEX needs a DEX reader; see checkXResourcesIsolation below.
 buildscript {
@@ -50,7 +68,9 @@ android {
     namespace = "org.aevix"
 
     defaultConfig {
-        multiDexEnabled = false
+        // D8 global synthetics such as RecordTag may be emitted in secondary DEX files.
+        // The framework loader is single-DEX, so merge the final APK DEX set during packaging.
+        multiDexEnabled = true
         buildConfigField("int", "HostPackageUid", "${injectedPackageUid}")
         buildConfigField("String", "InjectedPackageName", """"${injectedPackageName}"""")
         buildConfigField("String", "ManagerPackageName", """"${defaultManagerPackageName}"""")
@@ -84,6 +104,101 @@ abstract class Injected @Inject constructor(val moduleDir: String) {
     @get:Inject abstract val factory: ObjectFactory
 }
 
+/**
+ * Merges every DEX in the final APK into the single DEX consumed by the in-memory loader.
+ * D8 global synthetics (including com.android.tools.r8.RecordTag) can live in classes2.dex.
+ */
+abstract class PrepareFrameworkDex : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDirectory: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val d8Jar: RegularFileProperty
+
+    @get:Input abstract val minSdk: Property<Int>
+    @get:OutputFile abstract val outputFile: RegularFileProperty
+    @get:Inject abstract val execOperations: ExecOperations
+
+    @TaskAction
+    fun prepare() {
+        val output = outputFile.get().asFile
+        val apks = apkDirectory.get().asFile.listFiles { it.extension == "apk" }.orEmpty()
+        check(apks.size == 1) { "Expected one framework APK, found " + apks.size }
+
+        val work = temporaryDir.resolve("dex")
+        work.deleteRecursively()
+        check(work.mkdirs() || work.isDirectory) { "Cannot create DEX work directory: " + work }
+        val inputs = ZipFile(apks.single()).use { apk ->
+            apk.entries().asSequence()
+                .filter { Regex("classes(?:[2-9]|[1-9][0-9]+)?\\.dex").matches(it.name) }
+                .sortedBy {
+                    if (it.name == "classes.dex") 1
+                    else it.name.removePrefix("classes").removeSuffix(".dex").toInt()
+                }
+                .map { entry ->
+                    work.resolve(entry.name).also { file ->
+                        apk.getInputStream(entry).use { source ->
+                            file.outputStream().use { target -> source.copyTo(target) }
+                        }
+                    }
+                }.toList()
+        }
+        check(inputs.isNotEmpty()) { "Framework APK has no DEX files" }
+
+        val candidate = if (inputs.size == 1) inputs.single() else {
+            val merged = work.resolve("merged").apply { mkdirs() }
+            execOperations.javaexec {
+                classpath(d8Jar)
+                mainClass.set("com.android.tools.r8.D8")
+                args("--no-desugaring", "--min-api", minSdk.get().toString(), "--output", merged.path)
+                args(inputs.map { it.path })
+            }.assertNormalExitValue()
+            val dexFiles = merged.listFiles { it.extension == "dex" }.orEmpty()
+            check(dexFiles.size == 1) {
+                "Framework exceeds the single-DEX loader's capacity (D8 produced " + dexFiles.size + " files)"
+            }
+            dexFiles.single()
+        }
+
+        val inputClasses = inputs.flatMap { input ->
+            DexFileFactory.loadDexFile(input, Opcodes.forApi(minSdk.get())).classes.map { it.type }
+        }
+        check(inputClasses.size == inputClasses.toSet().size) {
+            "Framework APK contains duplicate DEX class definitions"
+        }
+        val classes = DexFileFactory.loadDexFile(candidate, Opcodes.forApi(minSdk.get())).classes
+        val outputClasses = classes.map { it.type }.toSet()
+        check(outputClasses == inputClasses.toSet()) {
+            "Merged framework DEX class mismatch: missing=" +
+                (inputClasses.toSet() - outputClasses) + ", extra=" +
+                (outputClasses - inputClasses.toSet())
+        }
+        val recordTag = "Lcom/android/tools/r8/RecordTag;"
+        check(classes.none { it.superclass == recordTag } || classes.any { it.type == recordTag }) {
+            "Framework DEX references RecordTag without defining it; D8 global synthetics were lost"
+        }
+
+        output.parentFile.mkdirs()
+        val staged = output.resolveSibling(output.name + ".pending")
+        try {
+            candidate.copyTo(staged, overwrite = true)
+            try {
+                Files.move(
+                    staged.toPath(), output.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(staged.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(staged.toPath())
+        }
+    }
+}
+
 dependencies {
     implementation(projects.hiddenapi.bridge)
     implementation(projects.legacy)
@@ -106,12 +221,32 @@ androidComponents {
         val zipFileName =
             "Aevix-${versionNameProvider.get()}-${versionCodeProvider.get()}-$variantCapped.zip"
 
+        // Keep the prepared artifact separate from AGP-owned DEX intermediates.
+        val dexOutPath =
+            if (variantLowered == "release")
+                layout.buildDirectory.dir(
+                    "intermediates/framework_dex/" + variantLowered + "/minify" + variantCapped + "WithR8"
+                )
+            else
+                layout.buildDirectory.dir(
+                    "intermediates/framework_dex/" + variantLowered + "/mergeDex" + variantCapped
+                )
+        val prepareFrameworkDex =
+            tasks.register<PrepareFrameworkDex>("prepareFrameworkDex" + variantCapped) {
+                apkDirectory.set(variant.artifacts.get(SingleArtifact.APK))
+                d8Jar.set(androidComponents.sdkComponents.sdkDirectory.map {
+                    it.file("build-tools/" + android.buildToolsVersion + "/lib/d8.jar")
+                })
+                minSdk.set(variant.minSdk.apiLevel)
+                outputFile.set(dexOutPath.map { it.file("classes.dex") })
+            }
         // Using Sync ensures that stale files from previous runs are removed.
         val prepareModuleFilesTask =
             tasks.register<Sync>("prepareModuleFiles$variantCapped") {
                 group = "Aevix Module Packaging"
                 dependsOn(
                     "assemble$variantCapped",
+                    prepareFrameworkDex,
                     ":manager:package$variantCapped",
                     ":daemon:package$variantCapped",
                     ":dex2oat:externalNativeBuild$variantCapped",
@@ -171,18 +306,11 @@ androidComponents {
                         include("**/liboat_hook.so")
                     }
                 }
-                val dexOutPath =
-                    if (variantLowered == "release")
-                        layout.buildDirectory.dir(
-                            "intermediates/dex/$variantLowered/minify${variantCapped}WithR8"
-                        )
-                    else
-                        layout.buildDirectory.dir(
-                            "intermediates/dex/$variantLowered/mergeDex$variantCapped"
-                        )
                 into("framework") {
-                    from(dexOutPath)
-                    rename("classes.dex", "aevix.dex")
+                    from(dexOutPath) {
+                        include("classes.dex")
+                        rename("classes.dex", "aevix.dex")
+                    }
                 }
                 val injected = objects.newInstance<Injected>(tempModuleDir.get().asFile.path)
                 doLast {

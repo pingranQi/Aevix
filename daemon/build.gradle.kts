@@ -155,6 +155,7 @@ dependencies {
   implementation(projects.hiddenapi.bridge)
   implementation(projects.services.daemonService)
   implementation(projects.services.managerService)
+  testImplementation("junit:junit:4.13.2")
   compileOnly(libs.androidx.annotation)
   compileOnly(projects.hiddenapi.stubs)
 }

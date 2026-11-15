@@ -34,6 +34,7 @@ object Dex2OatServer {
 
   private val dex2oatArray = arrayOfNulls<String>(6)
   private val fdArray = arrayOfNulls<FileDescriptor>(6)
+  private var compilerOpenFailed = false
 
   @Volatile
   var compatibility = DEX2OAT_OK
@@ -176,6 +177,12 @@ object Dex2OatServer {
             val is32Bit = header[4] == 1.toByte()
             val is64Bit = header[4] == 2.toByte()
             val isDebug = path.contains("dex2oatd")
+            val wrapperPath = if (is32Bit) WRAPPER32 else WRAPPER64
+
+            // This module may ship only one wrapper ABI. A stock compiler for an ABI without a
+            // matching wrapper is intentionally not mounted or cached, and must not make the
+            // supported ABI fail initialization.
+            if (!File(wrapperPath).isFile) return
 
             val index =
                 when {
@@ -185,26 +192,36 @@ object Dex2OatServer {
                 }
 
             if (index != -1 && dex2oatArray[index] == null) {
-              dex2oatArray[index] = path
-              fdArray[index] = Os.open(path, OsConstants.O_RDONLY, 0)
-              assignedIndex = index
-              Log.i(TAG, "Detected $path -> Assigned Index $index")
+              // Do not publish the path or descriptor until both open and inode validation have
+              // succeeded. A failure must not leave a half-initialized slot for the mount code.
+              val fd = Os.open(path, OsConstants.O_RDONLY, 0)
+              try {
+                val compiler = Os.fstat(fd)
+                val wrapper = Os.stat(wrapperPath)
+                check(compiler.st_dev != wrapper.st_dev || compiler.st_ino != wrapper.st_ino) {
+                  "Refusing dex2oat wrapper as stock compiler: $path"
+                }
+                dex2oatArray[index] = path
+                fdArray[index] = fd
+                assignedIndex = index
+                Log.i(TAG, "Detected $path -> Assigned Index $index")
+              } finally {
+                if (assignedIndex != index) Os.close(fd)
+              }
             }
           }
         }
         .onFailure { error ->
+          compilerOpenFailed = true
           if (assignedIndex >= 0) {
-            dex2oatArray[assignedIndex] = null
-            // Closing before the slot is cleared keeps the two in step: `doMount` reads
-            // `dex2oatArray` to decide which width exists, so a null slot with a live descriptor
-            // would be one nothing can reach again.
             fdArray[assignedIndex]?.let { fd ->
               runCatching { Os.close(fd) }
                   .onFailure { Log.w(TAG, "Failed to close the descriptor for $path", it) }
             }
             fdArray[assignedIndex] = null
+            dex2oatArray[assignedIndex] = null
           }
-          Log.w(TAG, "Failed to inspect dex2oat binary at $path", error)
+          Log.e(TAG, "Cannot initialize stock dex2oat binary at $path", error)
         }
   }
 
@@ -234,6 +251,23 @@ object Dex2OatServer {
   }
 
   fun start() {
+    if (compilerOpenFailed) {
+      // Paths are deliberately retained until doMount(false) has restored the stock mount state.
+      // Never start the socket server or SELinux observer with a missing/suspect stock compiler.
+      runCatching { doMount(false) }
+          .onFailure { Log.e(TAG, "Failed to disable dex2oat wrappers after initialization failure", it) }
+      fdArray.indices.forEach { index ->
+        fdArray[index]?.let { fd ->
+          runCatching { Os.close(fd) }
+              .onFailure { Log.w(TAG, "Failed to close dex2oat descriptor slot $index", it) }
+        }
+        fdArray[index] = null
+        dex2oatArray[index] = null
+      }
+      compatibility = DEX2OAT_MOUNT_FAILED
+      return
+    }
+
     if (notMounted()) {
       doMount(true)
       if (notMounted()) {

@@ -85,6 +85,8 @@ object FileSystem {
   val dbPath: File = configDirPath.resolve("modules_config.db").toFile()
 
   @Volatile private var preloadDex: SharedMemory? = null
+  private var preloadDexObfuscate: Boolean? = null
+  private var preloadDexApiProtection: Boolean? = null
 
   private val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
   private val lockPath: Path = basePath.resolve("lock")
@@ -249,8 +251,10 @@ object FileSystem {
     Channels.newChannel(inputStream).read(byteBuffer)
     SharedMemory.unmap(byteBuffer)
 
-    if (obfuscate) {
-      val newMemory = ObfuscationManager.obfuscateDex(memory, apiProtection)
+    if (obfuscate || apiProtection) {
+      // API protection is an independent switch: it must rewrite Xposed API names even when
+      // general framework-name obfuscation is disabled (for example, in a debug build).
+      val newMemory = ObfuscationManager.obfuscateDex(memory, obfuscate, apiProtection)
       if (memory !== newMemory) {
         memory.close()
         memory = newMemory
@@ -465,12 +469,33 @@ object FileSystem {
     return logDirPath.resolve("kmsg.log").toFile()
   }
 
+  /**
+   * Drops the cached DEX so the next injection maps it with the current API-protection mode.
+   * Do not close the previous SharedMemory here: a concurrent Binder reply may still be writing
+   * its descriptor. Once that caller releases its reference the old mapping can be reclaimed.
+   */
+  @Synchronized
+  fun invalidatePreloadDex() {
+    preloadDex = null
+    preloadDexObfuscate = null
+    preloadDexApiProtection = null
+  }
+
   @Synchronized
   fun getPreloadDex(obfuscate: Boolean, apiProtection: Boolean): SharedMemory? {
-    if (preloadDex == null) {
+    if (preloadDex == null ||
+        preloadDexObfuscate != obfuscate ||
+        preloadDexApiProtection != apiProtection) {
+      // A fork racing a settings change always receives a DEX built with the flags it snapshots.
+      // Do not close a previous SharedMemory: a Binder reply may still be parceling its descriptor.
+      preloadDex = null
+      preloadDexObfuscate = null
+      preloadDexApiProtection = null
       runCatching {
             FileInputStream("framework/aevix.dex").use {
               preloadDex = readDex(it, obfuscate, apiProtection)
+              preloadDexObfuscate = obfuscate
+              preloadDexApiProtection = apiProtection
             }
           }
           .onFailure { Log.e(TAG, "Failed to load framework dex", it) }

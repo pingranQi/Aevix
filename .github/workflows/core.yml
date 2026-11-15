@@ -47,6 +47,9 @@ jobs:
       # should not wait twenty minutes to surface. Crowdin owns the content of these files, so what
       # this catches is a bad merge or a line pasted into the wrong language -- both of which have
       # happened, and neither of which any other check in this repository looks for.
+      - name: Test dex2oat recursion guard
+        run: python3 dex2oat/tests/test_wrapper_recursion.py
+
       - name: Check translations
         run: |
           python3 manager/tools/check_translations.py manager/src/main/res
@@ -131,6 +134,9 @@ jobs:
       - name: Remove Android's cmake
         shell: bash
         run: rm -rf $ANDROID_HOME/cmake
+
+      - name: Test process-scope security
+        run: ./gradlew :daemon:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build with Gradle
         run: |
