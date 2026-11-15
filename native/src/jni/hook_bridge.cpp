@@ -144,7 +144,7 @@ bool RefreshCallbackSnapshot(JNIEnv *env, HookItem *item) {
     }
 
     jobjectArray global_snapshot =
-        ok ? static_cast<jobjectArray>(env->NewGlobalRef(result)) : nullptr;
+        ok ? reinterpret_cast<jobjectArray>(env->NewGlobalRef(result)) : nullptr;
     ok = ok && global_snapshot && !env->ExceptionCheck();
 
     if (global_snapshot) {
@@ -997,7 +997,7 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
 
     if (!hook_item->callback_class) {
         hook_item->callback_class =
-            static_cast<jclass>(env->NewGlobalRef(callback_class));
+            reinterpret_cast<jclass>(env->NewGlobalRef(callback_class));
         if (!hook_item->callback_class) return nullptr;
         hook_item->callback_snapshot_dirty = true;
     }
@@ -1006,7 +1006,7 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
         if (!RefreshCallbackSnapshot(env, hook_item)) return nullptr;
     }
 
-    return static_cast<jobjectArray>(env->NewLocalRef(hook_item->callback_snapshot));
+    return reinterpret_cast<jobjectArray>(env->NewLocalRef(hook_item->callback_snapshot));
 }
 /**
  * @brief The class name prefixes of the legacy Xposed API as this process will be asked for them.
