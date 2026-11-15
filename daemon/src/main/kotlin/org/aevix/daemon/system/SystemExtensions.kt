@@ -29,6 +29,23 @@ const val PER_USER_RANGE = 100000
  * by [PER_USER_RANGE] is only a user test for uids on this side of the line.
  */
 const val FIRST_APPLICATION_UID = 10000
+
+/** Android 17 Private Compute Core app-id range (Process.FIRST_PCC_UID..LAST_PCC_UID). */
+const val FIRST_PCC_UID = 30000
+const val LAST_PCC_UID = 39999
+
+/**
+ * Maps a PCC sandbox UID back to its owning application UID, preserving the Android user.
+ * Android derives PCC UIDs by adding FIRST_PCC_UID - FIRST_APPLICATION_UID to the app id.
+ */
+fun appUidOf(uid: Int): Int {
+  val appId = uid % PER_USER_RANGE
+  return if (appId in FIRST_PCC_UID..LAST_PCC_UID) {
+    uid - (FIRST_PCC_UID - FIRST_APPLICATION_UID)
+  } else {
+    uid
+  }
+}
 const val MATCH_ANY_USER = 0x00400000 // PackageManager.MATCH_ANY_USER
 const val MATCH_ALL_FLAGS =
     PackageManager.MATCH_DISABLED_COMPONENTS or
@@ -145,6 +162,8 @@ fun IPackageManager.getPackageInfoWithComponents(
 /** Extracts all unique process names associated with a package's components. */
 fun PackageInfo.fetchProcesses(): Set<String> {
   val processNames = mutableSetOf<String>()
+  // Keep the package's base process in the scope map as the parent of isolated services.
+  applicationInfo?.processName?.let(processNames::add)
 
   val componentArrays = arrayOf(activities, receivers, providers)
   for (components in componentArrays) {
