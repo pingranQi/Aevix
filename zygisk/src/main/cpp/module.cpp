@@ -15,16 +15,8 @@
 namespace vector::native::module {
 
 // --- Process UID Constants ---
-// Values used to identify special Android processes to avoid injection.
+// Values used to identify Android processes that must never receive framework injection.
 // https://android.googlesource.com/platform/system/core/+/master/libcutils/include/private/android_filesystem_config.h
-
-// The range of UIDs used for isolated processes (e.g., web renderers, WebView).
-constexpr int FIRST_ISOLATED_UID = 99000;
-constexpr int LAST_ISOLATED_UID = 99999;
-
-// The range of UIDs used for application zygotes, which are also not targets.
-constexpr int FIRST_APP_ZYGOTE_ISOLATED_UID = 90000;
-constexpr int LAST_APP_ZYGOTE_ISOLATED_UID = 98999;
 
 // UID for the process responsible for creating shared RELRO files.
 constexpr int SHARED_RELRO_UID = 1037;
