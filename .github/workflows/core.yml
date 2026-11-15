@@ -132,6 +132,9 @@ jobs:
         shell: bash
         run: rm -rf $ANDROID_HOME/cmake
 
+      - name: Test daemon UID mapping
+        run: ./gradlew :daemon:testDebugUnitTest
+
       - name: Build with Gradle
         run: |
           ./gradlew zipAll
