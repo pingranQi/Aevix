@@ -34,6 +34,7 @@ object Dex2OatServer {
 
   private val dex2oatArray = arrayOfNulls<String>(6)
   private val fdArray = arrayOfNulls<FileDescriptor>(6)
+  private var compilerOpenFailed = false
 
   @Volatile
   var compatibility = DEX2OAT_OK
@@ -158,9 +159,7 @@ object Dex2OatServer {
     val file = File(path)
     if (!file.exists()) return
 
-    // The slot this candidate took, or -1 if it failed before taking one. Tracked rather than
-    // recovered with `indexOf`: the array answers "which width is available", it is not a place to
-    // look a path up in, and a second reader of the cleanup should not have to prove that.
+    // A slot is reserved before opening so any exception after this point can undo both halves.
     var assignedIndex = -1
     runCatching {
           FileInputStream(file).use { fis ->
@@ -170,44 +169,64 @@ object Dex2OatServer {
             if (header[0] != 0x7F.toByte() ||
                 header[1] != 'E'.code.toByte() ||
                 header[2] != 'L'.code.toByte() ||
-                header[3] != 'F'.code.toByte())
-                return
+                header[3] != 'F'.code.toByte()) return
 
             val is32Bit = header[4] == 1.toByte()
             val is64Bit = header[4] == 2.toByte()
             val isDebug = path.contains("dex2oatd")
-
-            val index =
-                when {
-                  is32Bit -> if (isDebug) 1 else 0
-                  is64Bit -> if (isDebug) 3 else 2
-                  else -> -1
-                }
+            val index = when {
+              is32Bit -> if (isDebug) 1 else 0
+              is64Bit -> if (isDebug) 3 else 2
+              else -> -1
+            }
 
             if (index != -1 && dex2oatArray[index] == null) {
-              dex2oatArray[index] = path
-              fdArray[index] = Os.open(path, OsConstants.O_RDONLY, 0)
+              val wrapperPath = if (index < 2) WRAPPER32 else WRAPPER64
+              val wrapper = try {
+                Os.stat(wrapperPath)
+              } catch (error: ErrnoException) {
+                // This Aevix package may omit the optional 32-bit wrapper. Do not let an
+                // unsupported 32-bit APEX binary disable the supported 64-bit wrapper.
+                if (index < 2 && error.errno == OsConstants.ENOENT) {
+                  Log.i(TAG, "Skipping $path: optional 32-bit wrapper is not shipped")
+                  return@use
+                }
+                throw error
+              }
+
               assignedIndex = index
+              dex2oatArray[index] = path
+              val fd = Os.open(path, OsConstants.O_RDONLY, 0)
+              try {
+                // On a daemon restart the bind mount may still point at our wrapper. Compare
+                // the opened descriptor, not a later lookup of the pathname.
+                val candidate = Os.fstat(fd)
+                check(candidate.st_dev != wrapper.st_dev || candidate.st_ino != wrapper.st_ino) {
+                  "Refusing wrapper as stock compiler: $path"
+                }
+                fdArray[index] = fd
+              } finally {
+                if (fdArray[index] !== fd) Os.close(fd)
+              }
               Log.i(TAG, "Detected $path -> Assigned Index $index")
             }
           }
         }
         .onFailure { error ->
+          compilerOpenFailed = true
           if (assignedIndex >= 0) {
-            dex2oatArray[assignedIndex] = null
-            // Closing before the slot is cleared keeps the two in step: `doMount` reads
-            // `dex2oatArray` to decide which width exists, so a null slot with a live descriptor
-            // would be one nothing can reach again.
+            // Close any descriptor before clearing its path; doMount(false) still needs the
+            // path table to restore the original APEX binaries during startup cleanup.
             fdArray[assignedIndex]?.let { fd ->
               runCatching { Os.close(fd) }
                   .onFailure { Log.w(TAG, "Failed to close the descriptor for $path", it) }
             }
             fdArray[assignedIndex] = null
+            dex2oatArray[assignedIndex] = null
           }
-          Log.w(TAG, "Failed to inspect dex2oat binary at $path", error)
+          Log.e(TAG, "Cannot safely open stock dex2oat binary at $path", error)
         }
   }
-
   private fun notMounted(): Boolean {
     for (i in 0 until 4) {
       val bin = dex2oatArray[i] ?: continue
@@ -234,6 +253,21 @@ object Dex2OatServer {
   }
 
   fun start() {
+    if (compilerOpenFailed) {
+      // Never serve descriptors from a partially inspected set. Unmount every candidate first,
+      // then close all stock and hooker descriptors. Keep the path table for the unmount call.
+      doMount(false)
+      fdArray.indices.forEach { index ->
+        fdArray[index]?.let { fd ->
+          runCatching { Os.close(fd) }
+              .onFailure { Log.w(TAG, "Failed to close dex2oat descriptor in slot $index", it) }
+        }
+        fdArray[index] = null
+      }
+      compatibility = DEX2OAT_MOUNT_FAILED
+      return
+    }
+
     if (notMounted()) {
       doMount(true)
       if (notMounted()) {
