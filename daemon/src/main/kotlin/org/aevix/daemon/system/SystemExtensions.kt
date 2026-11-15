@@ -29,6 +29,25 @@ const val PER_USER_RANGE = 100000
  * by [PER_USER_RANGE] is only a user test for uids on this side of the line.
  */
 const val FIRST_APPLICATION_UID = 10000
+
+/** Android 17 Private Compute Core UID range within each Android user. */
+const val FIRST_PCC_UID = 30000
+const val LAST_PCC_UID = 39999
+
+/**
+ * Maps a Private Compute Core process UID back to the app UID whose package and scope it uses.
+ *
+ * PCC app IDs are shifted by FIRST_PCC_UID - FIRST_APPLICATION_UID. The user component is
+ * preserved by subtracting that offset from the full UID rather than only rewriting the app ID.
+ */
+fun appUidOf(uid: Int): Int {
+  val appId = uid % PER_USER_RANGE
+  return if (appId in FIRST_PCC_UID..LAST_PCC_UID) {
+    uid - (FIRST_PCC_UID - FIRST_APPLICATION_UID)
+  } else {
+    uid
+  }
+}
 const val MATCH_ANY_USER = 0x00400000 // PackageManager.MATCH_ANY_USER
 const val MATCH_ALL_FLAGS =
     PackageManager.MATCH_DISABLED_COMPONENTS or
