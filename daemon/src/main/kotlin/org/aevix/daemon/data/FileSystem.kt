@@ -468,6 +468,16 @@ object FileSystem {
   }
 
   @Synchronized
+  /**
+   * Drops the cached DEX so the next injection maps it with the current API-protection mode.
+   * Do not close the previous SharedMemory here: a concurrent Binder reply may still be writing
+   * its descriptor. Once that caller releases its reference the old mapping can be reclaimed.
+   */
+  @Synchronized
+  fun invalidatePreloadDex() {
+    preloadDex = null
+  }
+
   fun getPreloadDex(obfuscate: Boolean, apiProtection: Boolean): SharedMemory? {
     if (preloadDex == null) {
       runCatching {
