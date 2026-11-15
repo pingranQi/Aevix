@@ -27,11 +27,11 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.lang.ref.SoftReference;
 import java.util.WeakHashMap;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -577,7 +577,7 @@ public final class XposedHelpers {
         // then find the best match
         var key = new MemberCacheKey.Method(clazz, methodName, parameterTypes, false);
 
-        return methodCache.computeIfAbsent(key, k -> {
+        return getCachedMember(memberCacheFor(clazz).methods, key, () -> {
             Method bestMatch = null;
             Class<?> clz = clazz;
             boolean considerPrivateMethods = true;
@@ -588,8 +588,8 @@ public final class XposedHelpers {
                         continue;
 
                     // compare name and parameters
-                    if (method.getName().equals(k.name) && ClassUtilsX.isAssignable(
-                            k.parameters,
+                    if (method.getName().equals(methodName) && ClassUtilsX.isAssignable(
+                            parameterTypes,
                             method.getParameterTypes(),
                             true)) {
                         // get accessible version of method
@@ -806,20 +806,20 @@ public final class XposedHelpers {
         // then find the best match
         var key = new MemberCacheKey.Constructor(clazz, parameterTypes, false);
 
-        return constructorCache.computeIfAbsent(key, k -> {
+        return getCachedMember(memberCacheFor(clazz).constructors, key, () -> {
             Constructor<?> bestMatch = null;
             Constructor<?>[] constructors = clazz.getDeclaredConstructors();
             for (Constructor<?> constructor : constructors) {
                 // compare name and parameters
                 if (ClassUtilsX.isAssignable(
-                        k.parameters,
+                        parameterTypes,
                         constructor.getParameterTypes(),
                         true)) {
                     // get accessible version of method
                     if (bestMatch == null || MemberUtilsX.compareConstructorFit(
                             constructor,
                             bestMatch,
-                            k.parameters) < 0) {
+                            parameterTypes) < 0) {
                         bestMatch = constructor;
                     }
                 }
