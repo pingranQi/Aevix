@@ -219,7 +219,7 @@ object Dex2OatServer {
         .onFailure { error ->
           compilerOpenFailed = true
           if (assignedIndex >= 0) {
-            // Close any descriptor before clearing its path; doMount(false) still needs the
+            // Close any descriptor but retain the path; doMount(false) still needs the
             // path table to restore the original APEX binaries during startup cleanup.
             fdArray[assignedIndex]?.let { fd ->
               runCatching { Os.close(fd) }
