@@ -252,7 +252,7 @@ object FileSystem {
     if (obfuscate || apiProtection) {
       // API protection is an independent switch: it must rewrite Xposed API names even when
       // general framework-name obfuscation is disabled (for example, in a debug build).
-      val newMemory = ObfuscationManager.obfuscateDex(memory, apiProtection)
+      val newMemory = ObfuscationManager.obfuscateDex(memory, obfuscate, apiProtection)
       if (memory !== newMemory) {
         memory.close()
         memory = newMemory
