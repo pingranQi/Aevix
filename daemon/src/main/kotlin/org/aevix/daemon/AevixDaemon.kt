@@ -140,7 +140,11 @@ object AevixDaemon {
     runCatching { CliSocketServer.start() }
         .onFailure { Log.e(TAG, "CLI socket failed to start", it) }
 
-    // Preload Framework DEX in the background
+    // Read the persisted protection mode while the daemon still has access to its root-only DB.
+    runCatching { ConfigCache.loadPersistentSettings() }
+        .onFailure { Log.e(TAG, "Failed to load framework protection settings", it) }
+
+    // Preload Framework DEX in the background using the same protection mode as future module DEXes.
     scope.launch {
       FileSystem.getPreloadDex(
           ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
@@ -166,13 +170,19 @@ object AevixDaemon {
     // us during specialization, but when the injection fails nothing else has, and the daemon
     // used to die here on an unreadable preference.
     val isVerboseLog = ManagerService.isVerboseLogEnabled()
+    val isModuleLog = ManagerService.isModuleLogEnabled()
+
+    // Release builds only start the reader when at least one stream is enabled. Debug keeps its
+    // early reader for boot diagnostics, then both streams are reconciled to their stored switches.
+    if (isVerboseLog || isModuleLog) {
+      runCatching { LogcatMonitor.start() }
+          .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
+    }
+    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
+    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
 
     // Setup IPC channel for applications by injecting DaemonService binder
     sendToBridge(AevixService.asBinder(), false)
-
-    if (!isVerboseLog) {
-      LogcatMonitor.stopVerbose()
-    }
 
     Looper.loop()
     throw RuntimeException("Main thread loop unexpectedly exited")
