@@ -87,6 +87,7 @@ object ConfigCache {
     PreferenceStore.setApiProtectionEnabled(enabled)
     ensureCacheReady()
     synchronized(this) { state = state.copy(isApiProtectionEnabled = enabled) }
+    FileSystem.invalidatePreloadDex()
     requestCacheUpdate()
   }
 
