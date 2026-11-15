@@ -28,6 +28,8 @@ object LogcatMonitor {
   private var modulesFd = -1
   private var verboseFd = -1
   @Volatile private var isRunning = false
+  @Volatile private var modulesEnabled = false
+  @Volatile private var verboseEnabled = false
 
   private external fun runLogcat()
 
@@ -157,9 +159,25 @@ object LogcatMonitor {
         .onFailure { Log.w(TAG, "checkFd failed for $fd", it) }
   }
 
-  fun startVerbose() = Log.i(TAG, "!!start_verbose!!")
+  fun startVerbose() {
+    verboseEnabled = true
+    Log.i(TAG, "!!start_verbose!!")
+  }
 
-  fun stopVerbose() = Log.i(TAG, "!!stop_verbose!!")
+  fun stopVerbose() {
+    verboseEnabled = false
+    Log.i(TAG, "!!stop_verbose!!")
+  }
+
+  fun startModules() {
+    modulesEnabled = true
+    Log.i(TAG, "!!start_modules!!")
+  }
+
+  fun stopModules() {
+    modulesEnabled = false
+    Log.i(TAG, "!!stop_modules!!")
+  }
 
   fun refresh(isVerboseLog: Boolean) {
     Log.i(TAG, if (isVerboseLog) "!!refresh_verbose!!" else "!!refresh_modules!!")
