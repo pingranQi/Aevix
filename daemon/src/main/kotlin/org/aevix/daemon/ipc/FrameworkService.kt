@@ -224,13 +224,12 @@ object FrameworkService : IFrameworkService.Stub() {
   /**
    * The obfuscation map, as `count then key/value pairs` at the current position of [reply].
    *
-   * Entries are exactly the prefixes the API protection switch covers: with it off, the API
-   * packages are absent rather than mapped to themselves, which is what a caller needs — a name
-   * that is not in the table was not rewritten, so it resolves as written. Values are the names
-   * drawn this boot.
+   * The table always includes general framework prefixes and includes Xposed API prefixes
+   * only when API protection is enabled. The caller can therefore distinguish a name that was
+   * left untouched from one rewritten for this boot. Values are the names drawn this boot.
    *
-   * With both DEX obfuscation and API protection off nothing was renamed, so every value
-   * collapses to its key. API protection can also be enabled on its own.
+   * The map is filtered by the two switches independently: general prefixes follow DEX
+   * obfuscation, while Xposed API prefixes follow API protection.
    */
   private fun writeObfuscationMap(reply: Parcel) {
     val state = ConfigCache.state
