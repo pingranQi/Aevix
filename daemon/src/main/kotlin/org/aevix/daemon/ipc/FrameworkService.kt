@@ -229,8 +229,8 @@ object FrameworkService : IFrameworkService.Stub() {
    * that is not in the table was not rewritten, so it resolves as written. Values are the names
    * drawn this boot.
    *
-   * With DEX obfuscation off nothing was renamed at all, so every value collapses to its key and a
-   * caller can still rewrite unconditionally.
+   * With both DEX obfuscation and API protection off nothing was renamed, so every value
+   * collapses to its key. API protection can also be enabled on its own.
    */
   private fun writeObfuscationMap(reply: Parcel) {
     val state = ConfigCache.state
@@ -238,7 +238,7 @@ object FrameworkService : IFrameworkService.Stub() {
     reply.writeInt(signatures.size * 2)
     for ((key, value) in signatures) {
       reply.writeString(key)
-      reply.writeString(if (state.isDexObfuscateEnabled) value else key)
+      reply.writeString(if (state.isDexObfuscateEnabled || state.isApiProtectionEnabled) value else key)
     }
   }
 
