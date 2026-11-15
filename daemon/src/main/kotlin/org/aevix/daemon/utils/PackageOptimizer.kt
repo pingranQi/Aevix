@@ -92,11 +92,32 @@ object PackageOptimizer {
                 .redirectOutput(outputFile)
                 .start()
 
-        if (!process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        val completed =
+            try {
+              process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            } catch (interrupted: InterruptedException) {
+              process.destroyForcibly()
+              Thread.currentThread().interrupt()
+              throw interrupted
+            }
+        if (!completed) {
           process.destroy()
-          if (!process.waitFor(2, TimeUnit.SECONDS)) {
+          val stopped = try {
+            process.waitFor(2, TimeUnit.SECONDS)
+          } catch (interrupted: InterruptedException) {
             process.destroyForcibly()
-            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+            Thread.currentThread().interrupt()
+            throw interrupted
+          }
+          if (!stopped) {
+            process.destroyForcibly()
+            val forciblyStopped = try {
+              process.waitFor(2, TimeUnit.SECONDS)
+            } catch (interrupted: InterruptedException) {
+              Thread.currentThread().interrupt()
+              throw interrupted
+            }
+            if (!forciblyStopped) {
               throw IOException("Command did not terminate after being destroyed")
             }
           }
