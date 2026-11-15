@@ -29,9 +29,11 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.lang.ref.SoftReference;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * Helpers that simplify hooking and calling methods/constructors, getting and settings fields, ...
@@ -40,41 +42,83 @@ public final class XposedHelpers {
     private XposedHelpers() {
     }
 
-    // ClassValue scopes reflection entries to their declaring lookup class. Unlike a
-    // process-wide map keyed by Class, these values do not keep an otherwise unreachable
-    // application ClassLoader alive.
-    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Field, Optional<Field>>> fieldCache =
-            new ClassValue<>() {
-                @Override
-                protected ConcurrentHashMap<MemberCacheKey.Field, Optional<Field>> computeValue(Class<?> type) {
-                    return new ConcurrentHashMap<>();
-                }
-            };
-    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Method, Optional<Method>>> methodCache =
-            new ClassValue<>() {
-                @Override
-                protected ConcurrentHashMap<MemberCacheKey.Method, Optional<Method>> computeValue(Class<?> type) {
-                    return new ConcurrentHashMap<>();
-                }
-            };
-    private static final ClassValue<ConcurrentHashMap<MemberCacheKey.Constructor, Optional<Constructor<?>>>> constructorCache =
-            new ClassValue<>() {
-                @Override
-                protected ConcurrentHashMap<MemberCacheKey.Constructor, Optional<Constructor<?>>> computeValue(Class<?> type) {
-                    return new ConcurrentHashMap<>();
-                }
-            };
+    // Reflection members retain their declaring Class. Keep cache keys free of Class
+    // references and cache values soft so this global cache cannot pin a dynamic ClassLoader.
+    private static final WeakHashMap<Class<?>, MemberCache> memberCaches = new WeakHashMap<>();
+    private static final WeakHashMap<Class<?>, Long> classIdentities = new WeakHashMap<>();
+    private static long nextClassIdentity = 1L;
     private static final WeakHashMap<Object, HashMap<String, Object>> additionalFields = new WeakHashMap<>();
     private static final HashMap<String, ThreadLocal<AtomicInteger>> sMethodDepth = new HashMap<>();
 
+    private static final class MemberCache {
+        final HashMap<MemberCacheKey.Field, Optional<SoftReference<Field>>> fields = new HashMap<>();
+        final HashMap<MemberCacheKey.Method, Optional<SoftReference<Method>>> methods = new HashMap<>();
+        final HashMap<MemberCacheKey.Constructor, Optional<SoftReference<Constructor<?>>>> constructors =
+                new HashMap<>();
+    }
+
+    private static MemberCache memberCacheFor(Class<?> clazz) {
+        synchronized (memberCaches) {
+            MemberCache cache = memberCaches.get(clazz);
+            if (cache == null) {
+                cache = new MemberCache();
+                memberCaches.put(clazz, cache);
+            }
+            return cache;
+        }
+    }
+
+    private static long classIdentity(Class<?> clazz) {
+        synchronized (classIdentities) {
+            Long identity = classIdentities.get(clazz);
+            if (identity == null) {
+                identity = nextClassIdentity++;
+                classIdentities.put(clazz, identity);
+            }
+            return identity;
+        }
+    }
+
+    private static long[] parameterIdentities(Class<?>[] parameters) {
+        long[] identities = new long[parameters.length];
+        for (int i = 0; i < parameters.length; i++) {
+            identities[i] = classIdentity(parameters[i]);
+        }
+        return identities;
+    }
+
+    private static String[] parameterNames(Class<?>[] parameters) {
+        String[] names = new String[parameters.length];
+        for (int i = 0; i < parameters.length; i++) {
+            names[i] = parameters[i].getName();
+        }
+        return names;
+    }
+
+    private static String formatParameterNames(String[] names) {
+        return "(" + String.join(", ", names) + ")";
+    }
+
+    private static <K, T> Optional<T> getCachedMember(
+            Map<K, Optional<SoftReference<T>>> cache, K key, Supplier<Optional<T>> loader) {
+        synchronized (cache) {
+            Optional<SoftReference<T>> cached = cache.get(key);
+            if (cached != null) {
+                if (cached.isEmpty()) return Optional.empty();
+                T member = cached.get().get();
+                if (member != null) return Optional.of(member);
+            }
+
+            Optional<T> resolved = loader.get();
+            cache.put(key, resolved.map(SoftReference::new));
+            return resolved;
+        }
+    }
+
     /**
-     * Note that we use object key instead of string here, because string calculation will lose all
-     * the benefits of 'HashMap', this is basically the solution of performance traps.
-     * <p>
-     * So in fact we only need to use the structural comparison results of the reflection object.
-     *
-     * @see <a href="https://github.com/RinOrz/LSPosed/blob/a44e1f1cdf0c5e5ebfaface828e5907f5425df1b/benchmark/src/result/ReflectionCacheBenchmark.json">benchmarks for ART</a>
-     * @see <a href="https://github.com/meowool-catnip/cloak/blob/main/api/src/benchmark/kotlin/com/meowool/cloak/ReflectionObjectAccessTests.kt#L37-L65">benchmarks for JVM</a>
+     * Cache keys contain names and weakly-scoped identity tokens, never Class objects.
+     * Cached reflection members are soft-referenced because each member strongly references
+     * its declaring Class. This allows dynamic module ClassLoaders to become collectible.
      */
     private abstract static class MemberCacheKey {
         private final int hash;
@@ -91,98 +135,100 @@ public final class XposedHelpers {
             return hash;
         }
 
-        static final class Constructor extends MemberCacheKey {
-            private final Class<?> clazz;
-            private final Class<?>[] parameters;
-            private final boolean isExact;
-
-            public Constructor(Class<?> clazz, Class<?>[] parameters, boolean isExact) {
-                super(31 * Objects.hash(clazz, isExact) + Arrays.hashCode(parameters));
-                this.clazz = clazz;
-                this.parameters = parameters;
-                this.isExact = isExact;
-            }
-
-            @Override
-            public boolean equals(Object o) {
-                if (this == o) return true;
-                if (!(o instanceof Constructor)) return false;
-                Constructor that = (Constructor) o;
-                return isExact == that.isExact && Objects.equals(clazz, that.clazz) && Arrays.equals(parameters, that.parameters);
-            }
-
-            @NonNull
-            @Override
-            public String toString() {
-                var str = clazz.getName() + getParametersString(parameters);
-                if (isExact) {
-                    return str + "#exact";
-                } else {
-                    return str;
-                }
-            }
-        }
-
         static final class Field extends MemberCacheKey {
-            private final Class<?> clazz;
+            private final String className;
             private final String name;
 
-            public Field(Class<?> clazz, String name) {
-                super(Objects.hash(clazz, name));
-                this.clazz = clazz;
+            Field(Class<?> clazz, String name) {
+                super(31 * clazz.getName().hashCode() + name.hashCode());
+                this.className = clazz.getName();
                 this.name = name;
             }
 
             @Override
-            public boolean equals(Object o) {
-                if (this == o) return true;
-                if (!(o instanceof Field)) return false;
-                Field field = (Field) o;
-                return Objects.equals(clazz, field.clazz) && Objects.equals(name, field.name);
+            public boolean equals(Object obj) {
+                if (this == obj) return true;
+                if (!(obj instanceof Field)) return false;
+                Field that = (Field) obj;
+                return className.equals(that.className) && name.equals(that.name);
             }
 
             @NonNull
             @Override
             public String toString() {
-                return clazz.getName() + "#" + name;
+                return className + "#" + name;
             }
         }
 
         static final class Method extends MemberCacheKey {
-            private final Class<?> clazz;
+            private final String className;
             private final String name;
-            private final Class<?>[] parameters;
+            private final long[] parameterIdentities;
+            private final String[] parameterNames;
             private final boolean isExact;
 
-            public Method(Class<?> clazz, String name, Class<?>[] parameters, boolean isExact) {
-                super(31 * Objects.hash(clazz, name, isExact) + Arrays.hashCode(parameters));
-                this.clazz = clazz;
+            Method(Class<?> clazz, String name, Class<?>[] parameters, boolean isExact) {
+                super(31 * Objects.hash(clazz.getName(), name, isExact)
+                        + Arrays.hashCode(parameterIdentities(parameters)));
+                this.className = clazz.getName();
                 this.name = name;
-                this.parameters = parameters;
+                this.parameterIdentities = parameterIdentities(parameters);
+                this.parameterNames = parameterNames(parameters);
                 this.isExact = isExact;
             }
 
             @Override
-            public boolean equals(Object o) {
-                if (this == o) return true;
-                if (!(o instanceof Method)) return false;
-                Method method = (Method) o;
-                return isExact == method.isExact && Objects.equals(clazz, method.clazz) && Objects.equals(name, method.name) && Arrays.equals(parameters, method.parameters);
+            public boolean equals(Object obj) {
+                if (this == obj) return true;
+                if (!(obj instanceof Method)) return false;
+                Method that = (Method) obj;
+                return isExact == that.isExact
+                        && className.equals(that.className)
+                        && name.equals(that.name)
+                        && Arrays.equals(parameterIdentities, that.parameterIdentities);
             }
 
             @NonNull
             @Override
             public String toString() {
-                var str = clazz.getName() + '#' + name + getParametersString(parameters);
-                if (isExact) {
-                    return str + "#exact";
-                } else {
-                    return str;
-                }
+                String result = className + '#' + name + formatParameterNames(parameterNames);
+                return isExact ? result + "#exact" : result;
+            }
+        }
+
+        static final class Constructor extends MemberCacheKey {
+            private final String className;
+            private final long[] parameterIdentities;
+            private final String[] parameterNames;
+            private final boolean isExact;
+
+            Constructor(Class<?> clazz, Class<?>[] parameters, boolean isExact) {
+                super(31 * Objects.hash(clazz.getName(), isExact)
+                        + Arrays.hashCode(parameterIdentities(parameters)));
+                this.className = clazz.getName();
+                this.parameterIdentities = parameterIdentities(parameters);
+                this.parameterNames = parameterNames(parameters);
+                this.isExact = isExact;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (this == obj) return true;
+                if (!(obj instanceof Constructor)) return false;
+                Constructor that = (Constructor) obj;
+                return isExact == that.isExact
+                        && className.equals(that.className)
+                        && Arrays.equals(parameterIdentities, that.parameterIdentities);
+            }
+
+            @NonNull
+            @Override
+            public String toString() {
+                String result = className + formatParameterNames(parameterNames);
+                return isExact ? result + "#exact" : result;
             }
         }
     }
-
     /**
      * Look up a class with the specified class loader.
      *
@@ -237,9 +283,9 @@ public final class XposedHelpers {
     public static Field findField(Class<?> clazz, String fieldName) {
         var key = new MemberCacheKey.Field(clazz, fieldName);
 
-        return fieldCache.get(clazz).computeIfAbsent(key, k -> {
+        return getCachedMember(memberCacheFor(clazz).fields, key, () -> {
             try {
-                Field newField = findFieldRecursiveImpl(k.clazz, k.name);
+                Field newField = findFieldRecursiveImpl(clazz, fieldName);
                 newField.setAccessible(true);
                 return Optional.of(newField);
             } catch (NoSuchFieldException e) {
@@ -459,9 +505,9 @@ public final class XposedHelpers {
     public static Method findMethodExact(Class<?> clazz, String methodName, Class<?>... parameterTypes) {
         var key = new MemberCacheKey.Method(clazz, methodName, parameterTypes, true);
 
-        return methodCache.get(clazz).computeIfAbsent(key, k -> {
+        return getCachedMember(memberCacheFor(clazz).methods, key, () -> {
             try {
-                Method method = k.clazz.getDeclaredMethod(k.name, k.parameters);
+                Method method = clazz.getDeclaredMethod(methodName, parameterTypes);
                 method.setAccessible(true);
                 return Optional.of(method);
             } catch (NoSuchMethodException e) {
@@ -533,7 +579,7 @@ public final class XposedHelpers {
 
         return methodCache.computeIfAbsent(key, k -> {
             Method bestMatch = null;
-            Class<?> clz = k.clazz;
+            Class<?> clz = clazz;
             boolean considerPrivateMethods = true;
             do {
                 for (Method method : clz.getDeclaredMethods()) {
@@ -550,7 +596,7 @@ public final class XposedHelpers {
                         if (bestMatch == null || MemberUtilsX.compareMethodFit(
                                 method,
                                 bestMatch,
-                                k.parameters) < 0) {
+                                parameterTypes) < 0) {
                             bestMatch = method;
                         }
                     }
@@ -712,9 +758,9 @@ public final class XposedHelpers {
     public static Constructor<?> findConstructorExact(Class<?> clazz, Class<?>... parameterTypes) {
         var key = new MemberCacheKey.Constructor(clazz, parameterTypes, true);
 
-        return constructorCache.get(clazz).computeIfAbsent(key, k -> {
+        return getCachedMember(memberCacheFor(clazz).constructors, key, () -> {
             try {
-                Constructor<?> constructor = k.clazz.getDeclaredConstructor(k.parameters);
+                Constructor<?> constructor = clazz.getDeclaredConstructor(parameterTypes);
                 constructor.setAccessible(true);
                 return Optional.of(constructor);
             } catch (NoSuchMethodException e) {
@@ -762,7 +808,7 @@ public final class XposedHelpers {
 
         return constructorCache.computeIfAbsent(key, k -> {
             Constructor<?> bestMatch = null;
-            Constructor<?>[] constructors = k.clazz.getDeclaredConstructors();
+            Constructor<?>[] constructors = clazz.getDeclaredConstructors();
             for (Constructor<?> constructor : constructors) {
                 // compare name and parameters
                 if (ClassUtilsX.isAssignable(
