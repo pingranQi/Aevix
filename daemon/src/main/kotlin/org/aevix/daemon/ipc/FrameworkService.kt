@@ -231,9 +231,8 @@ object FrameworkService : IFrameworkService.Stub() {
    * The map is filtered by the two switches independently: general prefixes follow DEX
    * obfuscation, while Xposed API prefixes follow API protection.
    */
-  private fun writeObfuscationMap(reply: Parcel) {
-    val state = ConfigCache.state
-    val signatures = ObfuscationManager.getSignatures(state.isApiProtectionEnabled)
+  private fun writeObfuscationMap(reply: Parcel, dexObfuscate: Boolean, apiProtection: Boolean) {
+    val signatures = ObfuscationManager.getSignatures(apiProtection)
     reply.writeInt(signatures.size * 2)
     for ((key, value) in signatures) {
       reply.writeString(key)
@@ -241,7 +240,7 @@ object FrameworkService : IFrameworkService.Stub() {
           key.startsWith("de.robv.android.xposed.") ||
               key.startsWith("io.github.libxposed.api.Xposed")
       val shouldRename =
-          if (isApiPrefix) state.isApiProtectionEnabled else state.isDexObfuscateEnabled
+          if (isApiPrefix) apiProtection else dexObfuscate
       reply.writeString(if (shouldRename) value else key)
     }
   }
@@ -260,12 +259,17 @@ object FrameworkService : IFrameworkService.Stub() {
         // asks for them back to back, so the map was a second round trip for an answer this one
         // already had. A client that predates the append stops reading after the size, which is why
         // this can be added without taking the separate transaction away.
-        reply?.let { writeObfuscationMap(it) }
+        reply?.let {
+          writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
+        }
         return true
       }
       OBFUSCATION_MAP_TRANSACTION_CODE -> {
+        val state = ConfigCache.state
         reply?.writeNoException()
-        reply?.let { writeObfuscationMap(it) }
+        reply?.let {
+          writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
+        }
         return true
       }
     }
