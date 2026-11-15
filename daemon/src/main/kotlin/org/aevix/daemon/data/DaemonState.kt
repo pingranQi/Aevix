@@ -40,6 +40,8 @@ data class DaemonState(
     val miscPath: Path? = null,
     val modules: Map<String, LoadedModule> = emptyMap(),
     val scopes: Map<ProcessScope, List<LoadedModule>> = emptyMap(),
+    /** Database-backed scope rows only; these are the sole rows isolated services may inherit. */
+    val explicitScopes: Map<ProcessScope, List<LoadedModule>> = emptyMap(),
     /**
      * Modules the user enabled that the framework could not load, and why.
      *
