@@ -295,13 +295,12 @@ void AevixModule::preAppSpecialize(zygisk::AppSpecializeArgs *args) {
         return;
     }
 
-    // Skip isolated processes, which are heavily sandboxed.
+    // Shared RELRO is a framework process, not an application target. Other isolated
+    // processes reach the daemon so it can grant only an explicitly inherited package scope.
     const uid_t app_id = args->uid % PER_USER_RANGE;
-    if ((app_id >= FIRST_ISOLATED_UID && app_id <= LAST_ISOLATED_UID) ||
-        (app_id >= FIRST_APP_ZYGOTE_ISOLATED_UID && app_id <= LAST_APP_ZYGOTE_ISOLATED_UID) ||
-        app_id == SHARED_RELRO_UID) {
-        LOGV("Skipping injection for '{}': is an isolated process (UID: {}).", nice_name_str.get(),
-             app_id);
+    if (app_id == SHARED_RELRO_UID) {
+        LOGV("Skipping injection for '{}': is the shared RELRO process (UID: {}).",
+             nice_name_str.get(), app_id);
         return;
     }
 
