@@ -174,12 +174,12 @@ object AevixDaemon {
 
     // Release builds only start the reader when at least one stream is enabled. Debug keeps its
     // early reader for boot diagnostics, then both streams are reconciled to their stored switches.
+    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
+    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
     if (isVerboseLog || isModuleLog) {
       runCatching { LogcatMonitor.start() }
           .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
     }
-    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
-    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
 
     // Setup IPC channel for applications by injecting DaemonService binder
     sendToBridge(AevixService.asBinder(), false)
