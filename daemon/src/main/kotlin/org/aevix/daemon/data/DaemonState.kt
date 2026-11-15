@@ -28,11 +28,10 @@ data class DaemonState(
     // protection, and it is also what breaks a module whose implementation lives in a dynamically
     // loaded class rather than in the entry class: it installs nothing and reports nothing.
     //
-    // Off here, deliberately. The cost is the API packages' names sitting in the framework DEX as
-    // plain strings; the gain is that every module can reach the API no matter where it keeps its
-    // code. It also decides PROP_RT_API_PROTECTION, which is the flag a module reads to know it
-    // must not reflect into the API — with the protection off, reflection works, so the flag has to
-    // be off with it. Turning either on is one line here; nothing else decides.
+    // Off by default to preserve dynamic module loading compatibility. When enabled, API names
+    // are rewritten in the framework DEX and module DEXes, the preload DEX is invalidated, and the
+    // same state advertises PROP_RT_API_PROTECTION to modules. Dynamically loaded hook code that
+    // reflects into the Xposed API may stop resolving those names.
     val isApiProtectionEnabled: Boolean = false,
     // States initialized after system services are ready
     val isCacheReady: Boolean = false,
