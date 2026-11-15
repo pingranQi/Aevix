@@ -104,6 +104,89 @@ abstract class Injected @Inject constructor(val moduleDir: String) {
     @get:Inject abstract val factory: ObjectFactory
 }
 
+/**
+ * Merges every DEX in the final APK into the single DEX consumed by the in-memory loader.
+ * D8 global synthetics (including com.android.tools.r8.RecordTag) can live in classes2.dex.
+ */
+abstract class PrepareFrameworkDex : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDirectory: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val d8Jar: RegularFileProperty
+
+    @get:Input abstract val minSdk: Property<Int>
+    @get:OutputFile abstract val outputFile: RegularFileProperty
+    @get:Inject abstract val execOperations: ExecOperations
+
+    @TaskAction
+    fun prepare() {
+        val output = outputFile.get().asFile
+        val apks = apkDirectory.get().asFile.listFiles { it.extension == "apk" }.orEmpty()
+        check(apks.size == 1) { "Expected one framework APK, found " + apks.size }
+
+        val work = temporaryDir.resolve("dex")
+        work.deleteRecursively()
+        check(work.mkdirs() || work.isDirectory) { "Cannot create DEX work directory: " + work }
+        val inputs = ZipFile(apks.single()).use { apk ->
+            apk.entries().asSequence()
+                .filter { Regex("classes(?:[2-9]|[1-9][0-9]+)?\\.dex").matches(it.name) }
+                .sortedBy {
+                    if (it.name == "classes.dex") 1
+                    else it.name.removePrefix("classes").removeSuffix(".dex").toInt()
+                }
+                .map { entry ->
+                    work.resolve(entry.name).also { file ->
+                        apk.getInputStream(entry).use { source ->
+                            file.outputStream().use { target -> source.copyTo(target) }
+                        }
+                    }
+                }.toList()
+        }
+        check(inputs.isNotEmpty()) { "Framework APK has no DEX files" }
+
+        val candidate = if (inputs.size == 1) inputs.single() else {
+            val merged = work.resolve("merged").apply { mkdirs() }
+            execOperations.javaexec {
+                classpath(d8Jar)
+                mainClass.set("com.android.tools.r8.D8")
+                args("--no-desugaring", "--min-api", minSdk.get().toString(), "--output", merged.path)
+                args(inputs.map { it.path })
+            }.assertNormalExitValue()
+            val dexFiles = merged.listFiles { it.extension == "dex" }.orEmpty()
+            check(dexFiles.size == 1) {
+                "Framework exceeds the single-DEX loader's capacity (D8 produced " + dexFiles.size + " files)"
+            }
+            dexFiles.single()
+        }
+
+        val classes = DexFileFactory.loadDexFile(candidate, Opcodes.forApi(minSdk.get())).classes
+        val recordTag = "Lcom/android/tools/r8/RecordTag;"
+        check(classes.none { it.superclass == recordTag } || classes.any { it.type == recordTag }) {
+            "Framework DEX references RecordTag without defining it; D8 global synthetics were lost"
+        }
+
+        output.parentFile.mkdirs()
+        val staged = output.resolveSibling(output.name + ".pending")
+        try {
+            candidate.copyTo(staged, overwrite = true)
+            try {
+                Files.move(
+                    staged.toPath(), output.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(staged.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(staged.toPath())
+        }
+    }
+}
+
 dependencies {
     implementation(projects.hiddenapi.bridge)
     implementation(projects.legacy)
