@@ -287,12 +287,30 @@ object ManagerService : IManagerService.Stub() {
 
   override fun setVerboseLogEnabled(enabled: Boolean) {
     PreferenceStore.setVerboseLog(enabled)
-    if (isVerboseLogEnabled()) {
+    if (enabled) {
       LogcatMonitor.start()
       LogcatMonitor.startVerbose()
     } else {
       LogcatMonitor.stopVerbose()
     }
+  }
+
+  override fun isModuleLogEnabled() = PreferenceStore.isModuleLogEnabled()
+
+  override fun setModuleLogEnabled(enabled: Boolean) {
+    PreferenceStore.setModuleLogEnabled(enabled)
+    if (enabled) {
+      LogcatMonitor.start()
+      LogcatMonitor.startModules()
+    } else {
+      LogcatMonitor.stopModules()
+    }
+  }
+
+  override fun isApiProtectionEnabled() = ConfigCache.state.isApiProtectionEnabled
+
+  override fun setApiProtectionEnabled(enabled: Boolean) {
+    ConfigCache.updateApiProtectionEnabled(enabled)
   }
 
   override fun getLogParts(verbose: Boolean): List<String> = FileSystem.listLogParts(verbose)
