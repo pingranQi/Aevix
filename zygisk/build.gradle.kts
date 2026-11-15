@@ -209,12 +209,32 @@ androidComponents {
         val zipFileName =
             "Aevix-${versionNameProvider.get()}-${versionCodeProvider.get()}-$variantCapped.zip"
 
+        // Keep the prepared artifact separate from AGP-owned DEX intermediates.
+        val dexOutPath =
+            if (variantLowered == "release")
+                layout.buildDirectory.dir(
+                    "intermediates/framework_dex/" + variantLowered + "/minify" + variantCapped + "WithR8"
+                )
+            else
+                layout.buildDirectory.dir(
+                    "intermediates/framework_dex/" + variantLowered + "/mergeDex" + variantCapped
+                )
+        val prepareFrameworkDex =
+            tasks.register<PrepareFrameworkDex>("prepareFrameworkDex" + variantCapped) {
+                apkDirectory.set(variant.artifacts.get(SingleArtifact.APK))
+                d8Jar.set(androidComponents.sdkComponents.sdkDirectory.map {
+                    it.file("build-tools/" + android.buildToolsVersion + "/lib/d8.jar")
+                })
+                minSdk.set(variant.minSdk.apiLevel)
+                outputFile.set(dexOutPath.map { it.file("classes.dex") })
+            }
         // Using Sync ensures that stale files from previous runs are removed.
         val prepareModuleFilesTask =
             tasks.register<Sync>("prepareModuleFiles$variantCapped") {
                 group = "Aevix Module Packaging"
                 dependsOn(
                     "assemble$variantCapped",
+                    prepareFrameworkDex,
                     ":manager:package$variantCapped",
                     ":daemon:package$variantCapped",
                     ":dex2oat:externalNativeBuild$variantCapped",
@@ -274,18 +294,11 @@ androidComponents {
                         include("**/liboat_hook.so")
                     }
                 }
-                val dexOutPath =
-                    if (variantLowered == "release")
-                        layout.buildDirectory.dir(
-                            "intermediates/dex/$variantLowered/minify${variantCapped}WithR8"
-                        )
-                    else
-                        layout.buildDirectory.dir(
-                            "intermediates/dex/$variantLowered/mergeDex$variantCapped"
-                        )
                 into("framework") {
-                    from(dexOutPath)
-                    rename("classes.dex", "aevix.dex")
+                    from(dexOutPath) {
+                        include("classes.dex")
+                        rename("classes.dex", "aevix.dex")
+                    }
                 }
                 val injected = objects.newInstance<Injected>(tempModuleDir.get().asFile.path)
                 doLast {
