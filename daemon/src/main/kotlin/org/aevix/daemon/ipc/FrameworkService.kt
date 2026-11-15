@@ -238,7 +238,12 @@ object FrameworkService : IFrameworkService.Stub() {
     reply.writeInt(signatures.size * 2)
     for ((key, value) in signatures) {
       reply.writeString(key)
-      reply.writeString(if (state.isDexObfuscateEnabled || state.isApiProtectionEnabled) value else key)
+      val isApiPrefix =
+          key.startsWith("de.robv.android.xposed.") ||
+              key.startsWith("io.github.libxposed.api.Xposed")
+      val shouldRename =
+          if (isApiPrefix) state.isApiProtectionEnabled else state.isDexObfuscateEnabled
+      reply.writeString(if (shouldRename) value else key)
     }
   }
 
