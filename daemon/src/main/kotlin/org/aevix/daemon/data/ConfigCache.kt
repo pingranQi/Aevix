@@ -39,8 +39,6 @@ object ConfigCache {
   // Absent means the module places no restriction on its scope.
   @Volatile private var staticScopes: Map<String, Set<String>> = emptyMap()
 
-  // Only database-backed scope rows may be inherited by isolated service processes.
-  @Volatile private var explicitScopes: Map<ProcessScope, List<LoadedModule>> = emptyMap()
 
   /** The packages [modulePackage] claims, or null when it does not fix its scope. */
   fun staticScopeOf(modulePackage: String): Set<String>? = staticScopes[modulePackage]
@@ -442,12 +440,15 @@ object ConfigCache {
       // `oldState` is still the right thing to *read* from above: reusing an already-parsed module
       // is a decision about what was loaded when the rebuild started.
       synchronized(this) {
-        state = state.copy(modules = newModules, scopes = newScopes, unloadable = unloadable)
+        state = state.copy(
+            modules = newModules,
+            scopes = newScopes,
+            explicitScopes = newExplicitScopes.mapValues { (_, modules) -> modules.toList() },
+            unloadable = unloadable)
         // Swapped here rather than sixty lines earlier, so that the claims and the modules they
         // belong to become visible together. Between the two assignments a reader could see the new
         // static scopes against the old module set.
         staticScopes = newStaticScopes
-        explicitScopes = newExplicitScopes.mapValues { (_, modules) -> modules.toList() }
       }
 
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
@@ -479,7 +480,8 @@ object ConfigCache {
       return emptyList()
     }
     val requested = ProcessScope(processName, uid)
-    val match = resolveProcessScope(state.scopes, requested, explicitScopes) ?: return emptyList()
+    val snapshot = state
+    val match = resolveProcessScope(snapshot.scopes, requested, snapshot.explicitScopes) ?: return emptyList()
     if (match.scope.processName != requested.processName) {
       Log.i(
           TAG,
@@ -628,6 +630,7 @@ object ConfigCache {
 
   fun shouldSkipProcess(scope: ProcessScope): Boolean {
     ensureCacheReady()
-    return resolveProcessScope(state.scopes, scope, explicitScopes) == null
+    val snapshot = state
+    return resolveProcessScope(snapshot.scopes, scope, snapshot.explicitScopes) == null
   }
 }
