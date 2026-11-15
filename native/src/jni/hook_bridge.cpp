@@ -34,6 +34,12 @@ struct HookItem {
     std::multimap<jint, jobject, std::greater<>> legacy_callbacks;
     std::multimap<jint, jobject, std::greater<>> modern_callbacks;
 
+    // The arrays returned to Java are immutable between callback-list mutations.
+    // Keep one global snapshot so the hooked-method hot path only needs NewLocalRef.
+    jclass callback_class = nullptr;
+    jobjectArray callback_snapshot = nullptr;
+    bool callback_snapshot_dirty = true;
+
 private:
     // The backup is an atomic jobject.
     // This is crucial for thread safety during the initial hooking process.
@@ -78,6 +84,83 @@ public:
         backup.notify_all();
     }
 };
+
+// Rebuild the cached Java snapshot after a callback-list mutation. The caller holds
+// the same monitor used by callbackSnapshot, hookMethod, unhookMethod and replaceCallback.
+bool RefreshCallbackSnapshot(JNIEnv *env, HookItem *item) {
+    if (!item->callback_class) return true;
+
+    jclass object_class = env->FindClass("java/lang/Object");
+    if (!object_class) return false;
+
+    jobjectArray dummy_array = env->NewObjectArray(0, object_class, nullptr);
+    if (!dummy_array) {
+        env->DeleteLocalRef(object_class);
+        return false;
+    }
+
+    jclass object_array_class = env->GetObjectClass(dummy_array);
+    if (!object_array_class) {
+        env->DeleteLocalRef(dummy_array);
+        env->DeleteLocalRef(object_class);
+        return false;
+    }
+
+    jobjectArray result = env->NewObjectArray(2, object_array_class, nullptr);
+    jobjectArray modern = result
+        ? env->NewObjectArray(static_cast<jsize>(item->modern_callbacks.size()),
+                              item->callback_class, nullptr)
+        : nullptr;
+    jobjectArray legacy = result
+        ? env->NewObjectArray(static_cast<jsize>(item->legacy_callbacks.size()),
+                              object_class, nullptr)
+        : nullptr;
+
+    bool ok = result && modern && legacy && !env->ExceptionCheck();
+    if (ok) {
+        jsize index = 0;
+        for (const auto &entry : item->modern_callbacks) {
+            env->SetObjectArrayElement(modern, index++, entry.second);
+            if (env->ExceptionCheck()) {
+                ok = false;
+                break;
+            }
+        }
+    }
+    if (ok) {
+        jsize index = 0;
+        for (const auto &entry : item->legacy_callbacks) {
+            env->SetObjectArrayElement(legacy, index++, entry.second);
+            if (env->ExceptionCheck()) {
+                ok = false;
+                break;
+            }
+        }
+    }
+    if (ok) {
+        env->SetObjectArrayElement(result, 0, modern);
+        env->SetObjectArrayElement(result, 1, legacy);
+        ok = !env->ExceptionCheck();
+    }
+
+    jobjectArray global_snapshot =
+        ok ? static_cast<jobjectArray>(env->NewGlobalRef(result)) : nullptr;
+    ok = ok && global_snapshot && !env->ExceptionCheck();
+
+    if (global_snapshot) {
+        if (item->callback_snapshot) env->DeleteGlobalRef(item->callback_snapshot);
+        item->callback_snapshot = global_snapshot;
+        item->callback_snapshot_dirty = false;
+    }
+
+    if (legacy) env->DeleteLocalRef(legacy);
+    if (modern) env->DeleteLocalRef(modern);
+    if (result) env->DeleteLocalRef(result);
+    env->DeleteLocalRef(object_array_class);
+    env->DeleteLocalRef(dummy_array);
+    env->DeleteLocalRef(object_class);
+    return ok;
+}
 
 // A type alias for a thread-safe parallel hash map.
 // This map is the central registry, mapping a method's ID to its HookItem.
@@ -371,10 +454,20 @@ AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, hookMethod, jboolean useModernApi,
     lsplant::JNIMonitor monitor(env, backup);
 
     // Store a global reference to the callback object itself.
+    jobject global_callback = env->NewGlobalRef(callback);
+    if (!global_callback) return JNI_FALSE;
     if (useModernApi) {
-        hook_item->modern_callbacks.emplace(priority, env->NewGlobalRef(callback));
+        hook_item->modern_callbacks.emplace(priority, global_callback);
     } else {
-        hook_item->legacy_callbacks.emplace(priority, env->NewGlobalRef(callback));
+        hook_item->legacy_callbacks.emplace(priority, global_callback);
+    }
+
+    hook_item->callback_snapshot_dirty = true;
+    if (hook_item->callback_class && !RefreshCallbackSnapshot(env, hook_item) &&
+        env->ExceptionCheck()) {
+        // Registration remains valid. The dirty flag prevents a stale snapshot from
+        // being served; the next method call will retry the rebuild.
+        env->ExceptionClear();
     }
     return JNI_TRUE;
 }
@@ -403,8 +496,14 @@ AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, unhookMethod, jboolean useModernAp
     // Find the callback by comparing the jobject directly.
     for (auto i = callbacks.begin(); i != callbacks.end(); ++i) {
         if (env->IsSameObject(i->second, callback)) {
-            env->DeleteGlobalRef(i->second);  // Clean up the global reference.
+            env->DeleteGlobalRef(i->second);  // Clean up the callback-list reference.
             callbacks.erase(i);
+            hook_item->callback_snapshot_dirty = true;
+            if (hook_item->callback_class && !RefreshCallbackSnapshot(env, hook_item) &&
+                env->ExceptionCheck()) {
+                // Do not expose a stale snapshot after an allocation failure.
+                env->ExceptionClear();
+            }
             return JNI_TRUE;
         }
     }
@@ -459,6 +558,12 @@ AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, replaceCallback, jboolean useModer
         } else {
             callbacks.erase(i);
             callbacks.emplace(newPriority, replacement);
+        }
+        hook_item->callback_snapshot_dirty = true;
+        if (hook_item->callback_class && !RefreshCallbackSnapshot(env, hook_item) &&
+            env->ExceptionCheck()) {
+            // The callback mutation is committed; the next snapshot request retries.
+            env->ExceptionClear();
         }
         return JNI_TRUE;
     }
@@ -886,42 +991,23 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     jobject backup = hook_item->GetBackup();
     if (!backup) return nullptr;
 
-    // Lock to ensure a consistent snapshot of the callback lists.
+    // Match the monitor used by callback mutations. A call already holding a local
+    // reference to the previous array keeps its immutable snapshot alive naturally.
     lsplant::JNIMonitor monitor(env, backup);
 
-    // Get the generic Object class
-    jclass obj_class = env->FindClass("java/lang/Object");
-
-    // Construct the result array Object[2][]
-    // Use an existing array to reliably get the Class for Object[]
-    jobjectArray dummy_array = env->NewObjectArray(0, obj_class, nullptr);
-    jclass obj_array_class = env->GetObjectClass(dummy_array);
-    jobjectArray res = env->NewObjectArray(2, obj_array_class, nullptr);
-
-    // Create modern and legacy arrays
-    // Use 'callback_class' (AevixHookRecord) for the modern array for strict type safety
-    jobjectArray modern =
-        env->NewObjectArray((jsize)hook_item->modern_callbacks.size(), callback_class, nullptr);
-    jobjectArray legacy =
-        env->NewObjectArray((jsize)hook_item->legacy_callbacks.size(), obj_class, nullptr);
-
-    jsize i = 0;
-    for (const auto &callback_pair : hook_item->modern_callbacks) {
-        env->SetObjectArrayElement(modern, i++, callback_pair.second);
+    if (!hook_item->callback_class) {
+        hook_item->callback_class =
+            static_cast<jclass>(env->NewGlobalRef(callback_class));
+        if (!hook_item->callback_class) return nullptr;
+        hook_item->callback_snapshot_dirty = true;
     }
 
-    i = 0;
-    for (const auto &callback_pair : hook_item->legacy_callbacks) {
-        env->SetObjectArrayElement(legacy, i++, callback_pair.second);
+    if (hook_item->callback_snapshot_dirty || !hook_item->callback_snapshot) {
+        if (!RefreshCallbackSnapshot(env, hook_item)) return nullptr;
     }
 
-    env->SetObjectArrayElement(res, 0, modern);
-    env->SetObjectArrayElement(res, 1, legacy);
-    env->DeleteLocalRef(modern);
-    env->DeleteLocalRef(legacy);
-    return res;
+    return static_cast<jobjectArray>(env->NewLocalRef(hook_item->callback_snapshot));
 }
-
 /**
  * @brief The class name prefixes of the legacy Xposed API as this process will be asked for them.
  *
