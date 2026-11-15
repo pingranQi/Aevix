@@ -748,6 +748,8 @@ private fun LogSettingsSheet(
     val enabled by viewModel.verboseEnabled.collectAsStateWithLifecycle()
     val enforced by viewModel.verboseEnforced.collectAsStateWithLifecycle()
     val inlineTraces by viewModel.tracesInline.collectAsStateWithLifecycle()
+    val moduleLogEnabled by viewModel.moduleLogEnabled.collectAsStateWithLifecycle()
+    val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
     val sheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
     val resetKind = viewModel.resetKind
 
@@ -760,6 +762,54 @@ private fun LogSettingsSheet(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
                 )
+
+                if (viewModel.canConfigureApiProtection) {
+                    ListItem(
+                        modifier = Modifier.clickable {
+                            viewModel.setApiProtection(!apiProtectionEnabled)
+                        },
+                        supportingContent = {
+                            Text(
+                                stringResource(R.string.logs_api_protection_summary),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        leadingContent = {
+                            Icon(Icons.Rounded.WarningAmber, contentDescription = null)
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = apiProtectionEnabled,
+                                onCheckedChange = { viewModel.setApiProtection(it) },
+                            )
+                        },
+                        colors = sheetRowColors,
+                    ) { Text(stringResource(R.string.logs_api_protection_switch)) }
+                }
+
+                if (viewModel.canConfigureModuleLog) {
+                    ListItem(
+                        modifier = Modifier.clickable {
+                            viewModel.setModuleLog(!moduleLogEnabled)
+                        },
+                        supportingContent = {
+                            Text(
+                                stringResource(R.string.logs_module_summary),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        leadingContent = {
+                            Icon(Icons.Rounded.Apps, contentDescription = null)
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = moduleLogEnabled,
+                                onCheckedChange = { viewModel.setModuleLog(it) },
+                            )
+                        },
+                        colors = sheetRowColors,
+                    ) { Text(stringResource(R.string.logs_module_switch)) }
+                }
 
                 if (viewModel.canConfigureVerbose) {
                     ListItem(
