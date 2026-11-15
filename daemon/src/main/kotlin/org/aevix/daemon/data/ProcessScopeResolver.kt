@@ -23,6 +23,7 @@ internal data class ProcessScopeMatch<T>(
 internal fun <T> resolveProcessScope(
   scopes: Map<ProcessScope, List<T>>,
   requested: ProcessScope,
+  inheritableScopes: Map<ProcessScope, List<T>>,
 ): ProcessScopeMatch<T>? {
   scopes[requested]?.let { return ProcessScopeMatch(requested, it) }
 
@@ -41,7 +42,7 @@ internal fun <T> resolveProcessScope(
   if (suffix.contains(':')) return null
 
   val userId = normalized.uid / PER_USER_RANGE
-  val candidates = scopes.entries.filter { (candidate, _) ->
+  val candidates = inheritableScopes.entries.filter { (candidate, _) ->
     candidate.processName == basePackage && candidate.uid / PER_USER_RANGE == userId
   }
   if (candidates.size != 1) return null
