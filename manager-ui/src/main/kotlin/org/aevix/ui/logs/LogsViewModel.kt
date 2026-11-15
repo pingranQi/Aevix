@@ -172,6 +172,15 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
     private val _verboseEnforced = MutableStateFlow(false)
     val verboseEnforced: StateFlow<Boolean> = _verboseEnforced.asStateFlow()
 
+    private val _moduleLogEnabled = MutableStateFlow(false)
+    val moduleLogEnabled: StateFlow<Boolean> = _moduleLogEnabled.asStateFlow()
+
+    private val _apiProtectionEnabled = MutableStateFlow(false)
+    val apiProtectionEnabled: StateFlow<Boolean> = _apiProtectionEnabled.asStateFlow()
+
+    val canConfigureModuleLog: Boolean = source.canConfigureModuleLog
+    val canConfigureApiProtection: Boolean = source.canConfigureApiProtection
+
     val wordWrap: StateFlow<Boolean> = source.wordWrap
 
     val tracesInline: StateFlow<Boolean> = source.tracesInline
@@ -191,6 +200,12 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
     init {
         if (source.canConfigureVerbose) {
             viewModelScope.launch { _verboseEnabled.value = source.isVerboseEnabled() }
+        }
+        if (source.canConfigureModuleLog) {
+            viewModelScope.launch { _moduleLogEnabled.value = source.isModuleLogEnabled() }
+        }
+        if (source.canConfigureApiProtection) {
+            viewModelScope.launch { _apiProtectionEnabled.value = source.isApiProtectionEnabled() }
         }
     }
 
@@ -619,6 +634,29 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
 
     fun consumeSaveState() {
         _saveState.value = LogSaveState.Idle
+    }
+
+    fun setModuleLog(enabled: Boolean) {
+        viewModelScope.launch {
+            val actual = runCatching { source.setModuleLogEnabled(enabled) }
+                .getOrElse {
+                    Log.e(TAG, "logs: setting module logging to $enabled failed", it)
+                    !enabled
+                }
+            _moduleLogEnabled.value = actual
+            if (actual) refresh(LogTab.MODULES)
+        }
+    }
+
+    fun setApiProtection(enabled: Boolean) {
+        viewModelScope.launch {
+            val actual = runCatching { source.setApiProtectionEnabled(enabled) }
+                .getOrElse {
+                    Log.e(TAG, "logs: setting API protection to $enabled failed", it)
+                    !enabled
+                }
+            _apiProtectionEnabled.value = actual
+        }
     }
 
     fun setVerbose(enabled: Boolean) {
