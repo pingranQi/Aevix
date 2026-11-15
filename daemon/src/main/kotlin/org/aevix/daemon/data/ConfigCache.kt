@@ -466,7 +466,7 @@ object ConfigCache {
       Log.w(TAG, "Skip unexpected module queries for $processName")
       return emptyList()
     }
-    return state.scopes[ProcessScope(processName, uid)] ?: emptyList()
+    return state.scopes[ProcessScope(processName, appUidOf(uid))] ?: emptyList()
   }
 
   fun getModuleByUid(uid: Int): LoadedModule? =
@@ -609,6 +609,6 @@ object ConfigCache {
 
   fun shouldSkipProcess(scope: ProcessScope): Boolean {
     ensureCacheReady()
-    return !state.scopes.containsKey(scope)
+    return !state.scopes.containsKey(scope.copy(uid = appUidOf(scope.uid)))
   }
 }
