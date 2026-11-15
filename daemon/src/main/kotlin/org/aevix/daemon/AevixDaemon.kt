@@ -126,31 +126,12 @@ object AevixDaemon {
     runCatching { LogcatMonitor.prepare() }
         .onFailure { Log.e(TAG, "Logcat monitor failed to initialise", it) }
 
-    // Read the root-only configuration before starting the reader. Besides selecting the native
-    // streams, this ensures a release build captures module logs even when verbose logging is off.
-    runCatching { ConfigCache.loadPersistentSettings() }
-        .onFailure { Log.e(TAG, "Failed to load framework protection settings", it) }
-    val isVerboseLog = ManagerService.isVerboseLogEnabled()
-    val isModuleLog = ManagerService.isModuleLogEnabled()
-    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
-    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
-    if (isVerboseLog || isModuleLog) {
-      runCatching { LogcatMonitor.start() }
-          .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
-    }
-
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       runCatching { Dex2OatServer.start() }
           .onFailure { Log.e(TAG, "dex2oat server failed to start", it) }
     }
     runCatching { CliSocketServer.start() }
         .onFailure { Log.e(TAG, "CLI socket failed to start", it) }
-
-    // Preload Framework DEX in the background using the same protection mode as future module DEXes.
-    scope.launch {
-      FileSystem.getPreloadDex(
-          ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
-    }
 
     // Initializes system frameworks inside the daemon process
     ActivityThread.systemMain()
@@ -165,6 +146,24 @@ object AevixDaemon {
     waitForSystemService(Context.APP_OPS_SERVICE)
 
     applyNotificationWorkaround()
+
+    // Read root-only preferences after system services are ready but before sendToBridge drops
+    // the main thread's privileges. Start the native reader only after its independent streams
+    // have been configured, and preload the framework DEX with the matching protection mode.
+    runCatching { ConfigCache.loadPersistentSettings() }
+        .onFailure { Log.e(TAG, "Failed to load framework protection settings", it) }
+    val isVerboseLog = ManagerService.isVerboseLogEnabled()
+    val isModuleLog = ManagerService.isModuleLogEnabled()
+    if (isVerboseLog) LogcatMonitor.startVerbose() else LogcatMonitor.stopVerbose()
+    if (isModuleLog) LogcatMonitor.startModules() else LogcatMonitor.stopModules()
+    if (isVerboseLog || isModuleLog) {
+      runCatching { LogcatMonitor.start() }
+          .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
+    }
+    scope.launch {
+      FileSystem.getPreloadDex(
+          ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
+    }
 
     // Setup IPC channel for applications by injecting DaemonService binder
     sendToBridge(AevixService.asBinder(), false)
