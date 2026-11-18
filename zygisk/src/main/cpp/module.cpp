@@ -43,6 +43,9 @@ bool IsRecoveryEnabledFor(std::string process_name) {
     if (suffix != std::string::npos) process_name.resize(suffix);
     if (process_name.empty()) return false;
 
+    // Never allow the recovery list to disable the manager or its parasitic host process.
+    if (process_name == kManagerPackageName || process_name == kHostPackageName) return false;
+
     std::ifstream input(kRecoveryAppsPath);
     if (!input.is_open()) return false;
 
