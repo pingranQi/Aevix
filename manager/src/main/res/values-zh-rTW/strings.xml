@@ -423,7 +423,7 @@
     <string name="action_installed_other_user">已為 %1$s 安裝。</string>
     <string name="action_install_other_user_failed">無法為 %1$s 安裝。</string>
     <string name="action_hook_recovery">內聯 Hook 故障復原</string>
-    <string name="action_hook_recovery_summary">下次啟動時，Aevix 會跳過對此應用程式的注入。請強制停止並重新開啟應用程式以套用。系統 libart.so 仍會正常載入，不會卸載或隱藏。</string>
+    <string name="action_hook_recovery_summary">下次啟動時，Aevix 會跳過對此應用程式的注入。請強制停止並重新開啟應用程式以套用。下次啟動時，Aevix 會跳過對此應用程式的注入，因此 Xposed 模組也不會在此應用程式中載入。請強制停止並重新開啟應用程式以套用。系統 libart.so 仍會正常載入，不會卸載或隱藏。</string>
     <string name="action_hook_recovery_enabled">已為 %1$s 啟用 Hook 故障復原。請強制停止並重新開啟應用程式以套用。</string>
     <string name="action_hook_recovery_disabled">已為 %1$s 停用 Hook 故障復原。請強制停止並重新開啟應用程式以套用。</string>
     <string name="action_hook_recovery_save_failed">無法儲存 %1$s 的 Hook 故障復原設定。</string>
