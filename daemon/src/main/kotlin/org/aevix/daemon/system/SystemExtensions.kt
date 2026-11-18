@@ -14,7 +14,9 @@ import android.os.Build
 import android.os.IUserManager
 import android.util.Log
 import java.io.File
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import android.os.RemoteException
 import java.util.stream.Collectors
 import org.aevix.daemon.utils.getRealUsers
 
@@ -205,23 +207,14 @@ fun IPackageManager.queryIntentActivitiesCompat(
       }
 }
 
-/** Cached method reference to avoid repeated reflection lookups in loops. */
+/** Android 17 hidden entry point, resolved once rather than on every per-user package query. */
 private val getInstalledPackagesMethod: Method? by lazy {
-  val isLongFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-  android.content.pm.IPackageManager::class
-      .java
-      .declaredMethods
-      .find {
-        it.name == "getInstalledPackages" &&
-            it.parameterTypes.size == 2 &&
-            it.parameterTypes[0] ==
-                (if (isLongFlags) Long::class.javaPrimitiveType else Int::class.javaPrimitiveType)
-      }
-      ?.apply { isAccessible = true }
+  InstalledPackagesMethodResolver.resolve(
+      android.content.pm.IPackageManager::class.java, Build.VERSION.SDK_INT)
 }
 
 /**
- * Reflectively calls getInstalledPackages and casts to ParceledListSlice.
+ * Calls Android 17's hidden getInstalledPackages entry point and casts to ParceledListSlice.
  *
  * Null when the query did not happen, which an empty list would flatten into "this user holds
  * nothing" — and the manager builds its whole app list out of this.
@@ -231,12 +224,22 @@ private fun IPackageManager.getInstalledPackagesReflect(
     userId: Int
 ): List<PackageInfo>? {
   val method = getInstalledPackagesMethod ?: return null
-  return runCatching {
-        val result = method.invoke(this, flags, userId)
-        @Suppress("UNCHECKED_CAST") (result as? ParceledListSlice<PackageInfo>)?.list
-      }
-      .onFailure { Log.e(TAG, "Reflection call failed", it.cause ?: it) }
-      .getOrNull()
+  return try {
+    val result = method.invoke(this, flags, userId)
+    @Suppress("UNCHECKED_CAST")
+    (result as? ParceledListSlice<PackageInfo>)?.list
+  } catch (e: InvocationTargetException) {
+    // Preserve the Binder failure so callers can distinguish a dead package service from an
+    // empty package list. Runtime failures and Errors retain their original type as well.
+    when (val cause = e.targetException) {
+      is RemoteException -> throw cause
+      is RuntimeException -> throw cause
+      is Error -> throw cause
+      else -> throw IllegalStateException("getInstalledPackages failed", cause)
+    }
+  } catch (e: ReflectiveOperationException) {
+    throw IllegalStateException("getInstalledPackages is inaccessible", e)
+  }
 }
 
 fun IPackageManager.getInstalledPackagesFromAllUsers(
@@ -250,15 +253,15 @@ fun IPackageManager.getInstalledPackagesFromAllUsers(
   val users = userManager?.getRealUsers().orEmpty()
   if (users.isEmpty()) throw IllegalStateException("No users to enumerate packages for")
 
-  // Any, so the reflective invoke boxes it as Long or Int to match.
-  val flagParam: Any =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) flags.toLong() else flags
-
   for (user in users) {
     // A user the platform will not answer for fails the whole call, as it did before the Kotlin
     // rewrite: carrying on leaves a list short by a whole profile that nothing downstream can
     // tell from the truth. Reachable on an ordinary device, where enumerating every package per
     // user runs the binder buffer out and answers DeadObjectException.
+    // IPackageManager's generated Kotlin stub does not expose this hidden method. Resolve its
+    // platform-specific int/long overload reflectively; API 37 uses the long-flags entry point.
+    val flagParam: Any =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) flags.toLong() else flags
     val infos =
         getInstalledPackagesReflect(flagParam, user.id)
             ?: throw IllegalStateException("No package list for user ${user.id}")

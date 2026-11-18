@@ -18,26 +18,24 @@ import kotlin.reflect.KProperty
  * A thread-safe, lazy property delegate that fetches an Android system service Binder.
  * Automatically links a DeathRecipient to clear the cache if the service dies.
  */
-class SystemService<T>(private val name: String, private val asInterface: (IBinder) -> T) :
+class SystemService<T : Any>(private val name: String, private val asInterface: (IBinder) -> T) :
     ReadOnlyProperty<Any?, T?> {
-  @Volatile private var instance: T? = null
-
-  private val deathRecipient = IBinder.DeathRecipient { instance = null }
+  private val connection = BinderConnection<T, IBinder>()
 
   override fun getValue(thisRef: Any?, property: KProperty<*>): T? {
-    instance?.let {
-      return it
-    }
+    connection.value?.let { return it }
     return synchronized(this) {
-      instance?.let {
-        return it
-      }
+      connection.value?.let { return it }
       val binder = ServiceManager.getService(name) ?: return null
       try {
-        binder.linkToDeath(deathRecipient, 0)
-        instance = asInterface(binder)
-        instance
+        // Each death recipient captures the Binder it belongs to. A delayed death callback from a
+        // previous system_server instance must not clear a newer connection.
+        binder.linkToDeath(IBinder.DeathRecipient { connection.clearIfCurrent(binder) }, 0)
+        val service = asInterface(binder)
+        connection.publish(binder, service)
+        service
       } catch (e: RemoteException) {
+        connection.clearIfCurrent(binder)
         null
       }
     }

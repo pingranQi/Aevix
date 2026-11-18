@@ -35,6 +35,10 @@ object ConfigCache {
     private set
 
 
+  // File identity captured when a module generation was loaded. Path alone is not an identity:
+  // package updates commonly replace an APK in place while retaining the same sourceDir.
+  private val apkFingerprints = mutableMapOf<String, ApkFingerprint>()
+
   // Module package -> the packages it claims, for modules whose module.prop fixes the scope.
   // Absent means the module places no restriction on its scope.
   @Volatile private var staticScopes: Map<String, Set<String>> = emptyMap()
@@ -166,6 +170,7 @@ object ConfigCache {
       val oldState = state
 
       val newModules = mutableMapOf<String, LoadedModule>()
+      val newApkFingerprints = mutableMapOf<String, ApkFingerprint>()
       val newStaticScopes = mutableMapOf<String, Set<String>>()
 
       // Which users actually hold each module, which is what bounds where it may be injected.
@@ -185,7 +190,16 @@ object ConfigCache {
       // user had asked for it, the switch went off by itself, and nothing said why.
       val unloadable = mutableMapOf<String, Int>()
 
-      ModuleDatabase.enabledModuleRows().forEach { row ->
+      val enabledRows = ModuleDatabase.enabledModuleRows()
+      // User enumeration is one Binder round trip per rebuild, not one per enabled module. The
+      // snapshot is immutable for this rebuild and is also the boundary for per-user module state.
+      val users = if (enabledRows.isEmpty()) emptyList() else userManager?.getRealUsers() ?: emptyList()
+      if (enabledRows.isNotEmpty() && users.isEmpty()) {
+        Log.w(TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
+        return
+      }
+
+      enabledRows.forEach { row ->
         val pkgName = row.packageName
         var apkPath = row.apkPath
         if (pkgName == "lspd") return@forEach
@@ -193,17 +207,6 @@ object ConfigCache {
         val oldModule = oldState.modules[pkgName]
 
         var pkgInfo: android.content.pm.PackageInfo? = null
-        val users = userManager?.getRealUsers() ?: emptyList()
-        // No users means the question could not be asked, not that the answer is no. `getRealUsers`
-        // swallows a null binder and any failure of `IUserManager.getUsers` into an empty list, and
-        // an empty list here sends *every* enabled module down the not-installed path below — which
-        // deletes its row, its scope and its preferences. A transient failure to reach the user
-        // service would wipe the configuration of every module on the device.
-        if (users.isEmpty()) {
-          Log.w(
-              TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
-          return
-        }
         // Every user, not the first one that answers, because which users hold the module is what
         // keeps it out of a user that never installed it.
         //
@@ -254,13 +257,22 @@ object ConfigCache {
 
         val appInfo = pkgInfo.applicationInfo
 
+        val currentFingerprint =
+            apkPath?.let {
+              ApkFingerprint.read(FileSystem.toGlobalNamespace(it), pkgInfo.longVersionCode)
+            }
+
         if (oldModule != null &&
             appInfo?.sourceDir != null &&
             apkPath != null &&
             oldModule.apkPath != null &&
             FileSystem.toGlobalNamespace(apkPath).exists() &&
             apkPath == oldModule.apkPath &&
+            oldModule.versionCode == pkgInfo.longVersionCode &&
+            currentFingerprint != null &&
+            apkFingerprints[pkgName] == currentFingerprint &&
             File(appInfo.sourceDir).parent == File(apkPath).parent) {
+          newApkFingerprints[pkgName] = currentFingerprint
 
           // -1 is what `getModulesForSystemServer` leaves behind when it could not stat the
           // module's data directory before the package manager existed. This is the first point at
@@ -315,6 +327,8 @@ object ConfigCache {
                   code = loaded.apk
                 }
             newModules[pkgName] = module
+            ApkFingerprint.read(FileSystem.toGlobalNamespace(apkPath), pkgInfo.longVersionCode)
+                ?.let { newApkFingerprints[pkgName] = it }
           }
           // As above: a module the framework will not load is broken, not unwanted.
           //
@@ -451,6 +465,8 @@ object ConfigCache {
         // belong to become visible together. Between the two assignments a reader could see the new
         // static scopes against the old module set.
         staticScopes = newStaticScopes
+        apkFingerprints.clear()
+        apkFingerprints.putAll(newApkFingerprints)
       }
 
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")

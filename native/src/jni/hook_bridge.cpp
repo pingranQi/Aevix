@@ -15,6 +15,7 @@
 #include "elf/symbol_cache.h"
 #include "jni/jni_bridge.h"
 #include "jni/jni_hooks.h"
+#include "jni/primitive_conversion.h"
 
 namespace {
 
@@ -216,24 +217,7 @@ const PrimitiveWrapper *WrapperFor(JNIEnv *env, char shorty) {
  * java.lang.reflect performs on an argument. Every other pair is an IllegalArgumentException there,
  * rather than the silent truncation an unchecked unboxing would produce.
  */
-constexpr bool Widens(char from, char to) {
-    if (from == to) return true;
-    switch (from) {
-    case 'B':
-        return to == 'S' || to == 'I' || to == 'J' || to == 'F' || to == 'D';
-    case 'S':
-    case 'C':
-        return to == 'I' || to == 'J' || to == 'F' || to == 'D';
-    case 'I':
-        return to == 'J' || to == 'F' || to == 'D';
-    case 'J':
-        return to == 'F' || to == 'D';
-    case 'F':
-        return to == 'D';
-    default:
-        return false;
-    }
-}
+using aevix::jni::Widens;
 
 /**
  * @brief Unboxes `value` with its own accessor and stores it as the primitive `to` names.
