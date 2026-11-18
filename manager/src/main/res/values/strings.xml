@@ -299,7 +299,7 @@
     <string name="action_force_stopped">Stopped %1$s.</string>
     <string name="action_force_stop_failed">Could not stop %1$s.</string>
     <string name="action_hook_recovery">Inline hook recovery</string>
-    <string name="action_hook_recovery_summary">Skip Aevix injection for this app on its next start. Force-stop and reopen it to apply. System libart.so remains loaded normally.</string>
+    <string name="action_hook_recovery_summary">Skip Aevix injection for this app on its next start. Force-stop and reopen it to apply. Skip Aevix injection for this app on its next start. Xposed modules will not load in it. Force-stop and reopen it to apply. System libart.so remains loaded normally.</string>
     <string name="action_hook_recovery_enabled">Enabled hook recovery for %1$s. Force-stop and reopen it to apply.</string>
     <string name="action_hook_recovery_disabled">Disabled hook recovery for %1$s. Force-stop and reopen it to apply.</string>
     <string name="action_hook_recovery_save_failed">Could not save hook recovery for %1$s.</string>
