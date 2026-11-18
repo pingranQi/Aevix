@@ -73,7 +73,7 @@ interface IManagerService {
      * transaction ids follow declaration order, this number is the only thing standing between a
      * mismatched pair and a call that lands on the wrong method.</p>
      */
-    const int PROTOCOL_VERSION = 3;
+    const int PROTOCOL_VERSION = 4;
 
     /**
      * Which generation of this interface the daemon implements, never below 1.
@@ -812,4 +812,15 @@ interface IManagerService {
 
     /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
     void setApiProtectionEnabled(boolean enabled);
+
+    /**
+     * Whether Aevix should leave this application untouched on its next process start.
+     *
+     * <p>When enabled, Zygisk skips Aevix injection for this package. Existing processes are
+     * unaffected and must be force-stopped before the setting takes effect.</p>
+     */
+    boolean isInlineHookRecoveryEnabled(String packageName);
+
+    /** Adds or removes one package from the native per-app recovery allowlist. */
+    boolean setInlineHookRecoveryEnabled(String packageName, boolean enabled);
 }
