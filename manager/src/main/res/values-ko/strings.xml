@@ -421,4 +421,9 @@
     <string name="action_install_other_user_prompt_app">이 앱을 설치할 사용자를 선택하세요.</string>
     <string name="action_installed_other_user">%1$s에 설치했습니다.</string>
     <string name="action_install_other_user_failed">%1$s에 설치하지 못했습니다.</string>
+    <string name="action_hook_recovery">인라인 후크 복구</string>
+    <string name="action_hook_recovery_summary">다음 실행 시 이 앱에 Aevix를 주입하지 않습니다. 적용하려면 앱을 강제 종료한 다음 다시 여세요. 시스템 libart.so는 정상적으로 로드된 상태로 유지됩니다.</string>
+    <string name="action_hook_recovery_enabled">%1$s의 후크 복구를 사용 설정했습니다. 적용하려면 앱을 강제 종료한 다음 다시 여세요.</string>
+    <string name="action_hook_recovery_disabled">%1$s의 후크 복구를 사용 중지했습니다. 적용하려면 앱을 강제 종료한 다음 다시 여세요.</string>
+    <string name="action_hook_recovery_save_failed">%1$s의 후크 복구 설정을 저장하지 못했습니다.</string>
 </resources>
