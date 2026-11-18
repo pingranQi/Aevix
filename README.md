@@ -119,17 +119,12 @@ This project is made possible by the following open-source contributions:
 Aevix is licensed under the [GNU General Public License v3](http://www.gnu.org/copyleft/gpl.html).
 
 
-### Experimental: Per-app ART hook recovery
+### Experimental: Per-app inline hook recovery
 
-For an application that cannot start reliably with ART hooks enabled, add its exact package name to `/data/adb/aevix/recovery_apps`, one package per line. Create the parent directory if it does not exist. Example:
+Open the affected application's action sheet in Manager and enable **Inline hook recovery**. This is intended only for apps that fail to start with Aevix injection enabled.
 
-```text
-com.example.problematic
-com.example.problematic:worker
-```
+For the selected package, Zygisk skips Aevix injection entirely on the next process start. The app therefore starts without Aevix ART/inline hooks or Xposed modules loaded into it; other packages are unaffected. Force-stop and reopen the app after changing the switch. Disable the switch to restore normal Aevix injection on a later start.
 
-The process suffix after `:` is stripped, so normally only the base package name is needed. Blank lines and lines beginning with `#` are ignored. Remove the package name to disable recovery for that app. An absent or unreadable file leaves recovery disabled for every app.
+The daemon stores the package allowlist at `/data/adb/lspd/config/inline_hook_recovery_apps` and applies restrictive file permissions and the `system_file` SELinux label.
 
-Recovery mode is opt-in and package-scoped. It still loads the framework DEX, but skips LSPlant ART-hook initialization and the JNI hook registration path for the selected app. This can reduce compatibility with Xposed modules that depend on method hooks. It does **not** unload, unmap, or hide `libart.so`; removing ART's live mappings is unsafe and can crash the process or runtime. Restart the affected app after changing the file.
-
-This is an experimental native-side switch; it is not yet exposed as a toggle in the Manager app.
+This is a process-start recovery mode, not a live unhook operation. It does **not** unload, unmap, or hide Android's `libart.so`; ART requires its runtime mappings to remain present, and removing them can cause unpredictable crashes.
