@@ -34,7 +34,7 @@ const char *const kHostPackageName = INJECTED_PACKAGE_NAME;
 const char *const kManagerPackageName = MANAGER_PACKAGE_NAME;
 constexpr uid_t GID_INET = 3003;  // Android's Internet group ID.
 
-constexpr char kRecoveryAppsPath[] = "/data/adb/aevix/recovery_apps";
+constexpr char kRecoveryAppsPath[] = "/data/adb/lspd/config/inline_hook_recovery_apps";
 
 // Package-scoped opt-in. Missing/unreadable config means disabled. Never unmap libart.so:
 // ART owns live runtime state and its mappings cannot safely be removed from a running process.
@@ -152,7 +152,6 @@ private:
     // State managed within the class instance for each forked process.
     bool should_inject_ = false;
     bool is_manager_app_ = false;
-    bool recovery_mode_ = false;
 };
 
 // =========================================================================================
@@ -254,7 +253,6 @@ void AevixModule::preAppSpecialize(zygisk::AppSpecializeArgs *args) {
     // Reset state for this new process fork.
     should_inject_ = false;
     is_manager_app_ = false;
-    recovery_mode_ = false;
 
     // --- Manager App Special Handling ---
     // We identify our manager app by a special UID and
@@ -304,9 +302,11 @@ void AevixModule::preAppSpecialize(zygisk::AppSpecializeArgs *args) {
     // Determine if the current process is a valid target for injection.
     lsplant::JUTFString nice_name_str(env_, args->nice_name);
 
-    recovery_mode_ = IsRecoveryEnabledFor(nice_name_str.get());
-    if (recovery_mode_) {
-        LOGW("Recovery mode enabled for '{}': ART/JNI hooks will be skipped.", nice_name_str.get());
+    if (IsRecoveryEnabledFor(nice_name_str.get())) {
+        // Do not partially initialize the framework: the recovery process must remain untouched.
+        // The next app process is forked without Aevix, so no live hook needs to be removed.
+        LOGW("Hook recovery enabled for '{}': skipping Aevix injection.", nice_name_str.get());
+        return;
     }
 
     // An app without a data directory cannot be a target.
@@ -381,14 +381,8 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     }
     close(dex_fd);  // The FD is duplicated by mmap, we can close it now.
 
-    // Recovery mode keeps framework loading but avoids touching ART hook state.
-    // It intentionally does not attempt to unmap or hide libart.so.
-    if (!recovery_mode_) {
-        this->InitArtHooker(env_, init_info_);
-        this->InitHooks(env_);
-    } else {
-        LOGW("Skipping LSPlant and JNI hook initialization for '{}'.", nice_name_str.get());
-    }
+    this->InitArtHooker(env_, init_info_);
+    this->InitHooks(env_);
     // Find the Java entrypoint.
     this->SetupEntryClass(env_);
 
