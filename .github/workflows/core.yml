@@ -58,6 +58,9 @@ jobs:
           c++ -std=c++20 -Wall -Wextra -Werror -Inative/src native/tests/test_primitive_widening.cpp -o /tmp/aevix-primitive-widening
           /tmp/aevix-primitive-widening
 
+      - name: Test ART HookBridge contract
+        run: python3 native/tests/test_hook_bridge_contract.py
+
       - name: Check translations
         run: |
           python3 manager/tools/check_translations.py manager/src/main/res

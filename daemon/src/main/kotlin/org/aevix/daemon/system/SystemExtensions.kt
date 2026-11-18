@@ -205,14 +205,14 @@ fun IPackageManager.queryIntentActivitiesCompat(
       }
 }
 
-/** Cached method reference to avoid repeated reflection lookups in loops. */
+/** Android 17 hidden entry point, resolved once rather than on every per-user package query. */
 private val getInstalledPackagesMethod: Method? by lazy {
   InstalledPackagesMethodResolver.resolve(
       android.content.pm.IPackageManager::class.java, Build.VERSION.SDK_INT)
 }
 
 /**
- * Reflectively calls getInstalledPackages and casts to ParceledListSlice.
+ * Calls Android 17's hidden getInstalledPackages entry point and casts to ParceledListSlice.
  *
  * Null when the query did not happen, which an empty list would flatten into "this user holds
  * nothing" — and the manager builds its whole app list out of this.
