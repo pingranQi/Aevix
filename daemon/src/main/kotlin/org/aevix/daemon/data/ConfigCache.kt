@@ -207,16 +207,6 @@ object ConfigCache {
         val oldModule = oldState.modules[pkgName]
 
         var pkgInfo: android.content.pm.PackageInfo? = null
-        // No users means the question could not be asked, not that the answer is no. `getRealUsers`
-        // swallows a null binder and any failure of `IUserManager.getUsers` into an empty list, and
-        // an empty list here sends *every* enabled module down the not-installed path below — which
-        // deletes its row, its scope and its preferences. A transient failure to reach the user
-        // service would wipe the configuration of every module on the device.
-        if (users.isEmpty()) {
-          Log.w(
-              TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
-          return
-        }
         // Every user, not the first one that answers, because which users hold the module is what
         // keeps it out of a user that never installed it.
         //

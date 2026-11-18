@@ -241,18 +241,24 @@ fun IPackageManager.getInstalledPackagesFromAllUsers(
   val users = userManager?.getRealUsers().orEmpty()
   if (users.isEmpty()) throw IllegalStateException("No users to enumerate packages for")
 
-  // Any, so the reflective invoke boxes it as Long or Int to match.
-  val flagParam: Any =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) flags.toLong() else flags
-
   for (user in users) {
     // A user the platform will not answer for fails the whole call, as it did before the Kotlin
     // rewrite: carrying on leaves a list short by a whole profile that nothing downstream can
     // tell from the truth. Reachable on an ordinary device, where enumerating every package per
     // user runs the binder buffer out and answers DeadObjectException.
     val infos =
-        getInstalledPackagesReflect(flagParam, user.id)
-            ?: throw IllegalStateException("No package list for user ${user.id}")
+        if (Build.VERSION.SDK_INT >= 37) {
+          getInstalledPackagesReflect(flags.toLong(), user.id)
+              ?: throw IllegalStateException("No package list for user ${user.id}")
+        } else {
+          val slice =
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                getInstalledPackages(flags.toLong(), user.id)
+              } else {
+                getInstalledPackages(flags, user.id)
+              }
+          slice?.list ?: emptyList()
+        }
     if (infos.isEmpty()) continue
 
     val validUserApps =
