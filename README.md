@@ -117,3 +117,19 @@ This project is made possible by the following open-source contributions:
 ### License
 
 Aevix is licensed under the [GNU General Public License v3](http://www.gnu.org/copyleft/gpl.html).
+
+
+### Experimental: Per-app ART hook recovery
+
+For an application that cannot start reliably with ART hooks enabled, add its exact package name to `/data/adb/aevix/recovery_apps`, one package per line. Create the parent directory if it does not exist. Example:
+
+```text
+com.example.problematic
+com.example.problematic:worker
+```
+
+The process suffix after `:` is stripped, so normally only the base package name is needed. Blank lines and lines beginning with `#` are ignored. Remove the package name to disable recovery for that app. An absent or unreadable file leaves recovery disabled for every app.
+
+Recovery mode is opt-in and package-scoped. It still loads the framework DEX, but skips LSPlant ART-hook initialization and the JNI hook registration path for the selected app. This can reduce compatibility with Xposed modules that depend on method hooks. It does **not** unload, unmap, or hide `libart.so`; removing ART's live mappings is unsafe and can crash the process or runtime. Restart the affected app after changing the file.
+
+This is an experimental native-side switch; it is not yet exposed as a toggle in the Manager app.
