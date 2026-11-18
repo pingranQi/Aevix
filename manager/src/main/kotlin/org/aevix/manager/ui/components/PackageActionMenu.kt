@@ -107,6 +107,7 @@ private enum class ActionId {
     AppInfo,
     SoftReboot,
     ForceStop,
+    HookRecovery,
     Reoptimize,
     InstallOtherUser,
     Uninstall,
@@ -215,6 +216,20 @@ fun PackageActionSheet(
     // reads as a flaky button. `appScope` belongs to the process and outlives the sheet.
     val scope = ServiceLocator.appScope
     val daemon = ServiceLocator.daemon
+
+    var hookRecoveryEnabled by remember(packageName) { mutableStateOf(false) }
+    var hookRecoveryLoaded by remember(packageName) { mutableStateOf(false) }
+    var hookRecoverySaving by remember(packageName) { mutableStateOf(false) }
+    LaunchedEffect(packageName) {
+        daemon.isInlineHookRecoveryEnabled(packageName)
+            .onSuccess {
+                hookRecoveryEnabled = it
+                hookRecoveryLoaded = true
+            }
+            .onFailure { e ->
+                logW("actions: hook recovery state for $packageName could not be read", e)
+            }
+    }
 
     if (confirmSoftReboot) {
         SharedAlertDialog(
@@ -513,6 +528,46 @@ LocalizedOverlay {
             }
         }
 
+        row(ActionId.HookRecovery, !isSystemFramework && hookRecoveryLoaded) {
+            ActionToggleRow(
+                icon = Icons.Rounded.RestartAlt,
+                title = stringResource(R.string.action_hook_recovery),
+                subtitle = stringResource(R.string.action_hook_recovery_summary),
+                checked = hookRecoveryEnabled,
+                enabled = !hookRecoverySaving,
+                onCheckedChange = { enabled ->
+                    hookRecoverySaving = true
+                    scope.launch(Dispatchers.Main) {
+                        val result = daemon.setInlineHookRecoveryEnabled(packageName, enabled)
+                        hookRecoverySaving = false
+                        if (result.getOrDefault(false)) {
+                            hookRecoveryEnabled = enabled
+                            onResult(
+                                PackageActionResult(
+                                    if (enabled) R.string.action_hook_recovery_enabled
+                                    else R.string.action_hook_recovery_disabled,
+                                    appName,
+                                    tone = SnackbarTone.Success,
+                                )
+                            )
+                        } else {
+                            logE(
+                                "actions: hook recovery setting for $packageName could not be saved",
+                                result.exceptionOrNull(),
+                            )
+                            onResult(
+                                PackageActionResult(
+                                    R.string.action_hook_recovery_save_failed,
+                                    appName,
+                                    tone = SnackbarTone.Failure,
+                                )
+                            )
+                        }
+                    }
+                },
+            )
+        }
+
         // Only for a hook target. Re-optimizing recompiles an app so that ART stops inlining the
         // methods a module wants to hook — which is about the app being hooked, not about the
         // module doing the hooking, so on a module it would be an expensive button for nothing.
@@ -708,6 +763,7 @@ private fun ActionToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     subtitle: String? = null,
+    enabled: Boolean = true,
 ) {
     ActionDrawerItem(
         icon = icon,
@@ -716,10 +772,11 @@ private fun ActionToggleRow(
         modifier =
             Modifier.toggleable(
                 value = checked,
+                enabled = enabled,
                 role = Role.Switch,
                 onValueChange = onCheckedChange,
             ),
-        trailing = { Switch(checked = checked, onCheckedChange = null) },
+        trailing = { Switch(checked = checked, onCheckedChange = null, enabled = enabled) },
     )
 }
 
