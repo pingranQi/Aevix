@@ -278,6 +278,12 @@ object ManagerService : IManagerService.Stub() {
 
   override fun getModuleScope(packageName: String) = ModuleDatabase.getModuleScope(packageName)
 
+  override fun isInlineHookRecoveryEnabled(packageName: String) =
+      FileSystem.isInlineHookRecoveryEnabled(packageName)
+
+  override fun setInlineHookRecoveryEnabled(packageName: String, enabled: Boolean) =
+      FileSystem.setInlineHookRecoveryEnabled(packageName, enabled)
+
   // Report the stored preference without forcing debug builds to keep logging enabled.
   // Debug builds default to verbose capture; the user can still turn it off and the switch reflects
   // the persisted value rather than snapping back to the build type.
