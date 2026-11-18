@@ -207,17 +207,8 @@ fun IPackageManager.queryIntentActivitiesCompat(
 
 /** Cached method reference to avoid repeated reflection lookups in loops. */
 private val getInstalledPackagesMethod: Method? by lazy {
-  val isLongFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-  android.content.pm.IPackageManager::class
-      .java
-      .declaredMethods
-      .find {
-        it.name == "getInstalledPackages" &&
-            it.parameterTypes.size == 2 &&
-            it.parameterTypes[0] ==
-                (if (isLongFlags) Long::class.javaPrimitiveType else Int::class.javaPrimitiveType)
-      }
-      ?.apply { isAccessible = true }
+  InstalledPackagesMethodResolver.resolve(
+      android.content.pm.IPackageManager::class.java, Build.VERSION.SDK_INT)
 }
 
 /**

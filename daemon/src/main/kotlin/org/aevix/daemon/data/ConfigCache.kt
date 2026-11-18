@@ -35,6 +35,10 @@ object ConfigCache {
     private set
 
 
+  // File identity captured when a module generation was loaded. Path alone is not an identity:
+  // package updates commonly replace an APK in place while retaining the same sourceDir.
+  private val apkFingerprints = mutableMapOf<String, ApkFingerprint>()
+
   // Module package -> the packages it claims, for modules whose module.prop fixes the scope.
   // Absent means the module places no restriction on its scope.
   @Volatile private var staticScopes: Map<String, Set<String>> = emptyMap()
@@ -166,6 +170,7 @@ object ConfigCache {
       val oldState = state
 
       val newModules = mutableMapOf<String, LoadedModule>()
+      val newApkFingerprints = mutableMapOf<String, ApkFingerprint>()
       val newStaticScopes = mutableMapOf<String, Set<String>>()
 
       // Which users actually hold each module, which is what bounds where it may be injected.
@@ -254,13 +259,22 @@ object ConfigCache {
 
         val appInfo = pkgInfo.applicationInfo
 
+        val currentFingerprint =
+            apkPath?.let {
+              ApkFingerprint.read(FileSystem.toGlobalNamespace(it), pkgInfo.longVersionCode)
+            }
+
         if (oldModule != null &&
             appInfo?.sourceDir != null &&
             apkPath != null &&
             oldModule.apkPath != null &&
             FileSystem.toGlobalNamespace(apkPath).exists() &&
             apkPath == oldModule.apkPath &&
+            oldModule.versionCode == pkgInfo.longVersionCode &&
+            currentFingerprint != null &&
+            apkFingerprints[pkgName] == currentFingerprint &&
             File(appInfo.sourceDir).parent == File(apkPath).parent) {
+          newApkFingerprints[pkgName] = currentFingerprint
 
           // -1 is what `getModulesForSystemServer` leaves behind when it could not stat the
           // module's data directory before the package manager existed. This is the first point at
@@ -315,6 +329,8 @@ object ConfigCache {
                   code = loaded.apk
                 }
             newModules[pkgName] = module
+            ApkFingerprint.read(FileSystem.toGlobalNamespace(apkPath), pkgInfo.longVersionCode)
+                ?.let { newApkFingerprints[pkgName] = it }
           }
           // As above: a module the framework will not load is broken, not unwanted.
           //
@@ -451,6 +467,8 @@ object ConfigCache {
         // belong to become visible together. Between the two assignments a reader could see the new
         // static scopes against the old module set.
         staticScopes = newStaticScopes
+        apkFingerprints.clear()
+        apkFingerprints.putAll(newApkFingerprints)
       }
 
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
