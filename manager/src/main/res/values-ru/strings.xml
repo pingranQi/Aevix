@@ -437,4 +437,9 @@
     <string name="action_install_other_user_prompt_app">Выберите пользователя, для которого установить приложение.</string>
     <string name="action_installed_other_user">Установлено для %1$s.</string>
     <string name="action_install_other_user_failed">Не удалось установить для %1$s.</string>
+    <string name="action_hook_recovery">Восстановление inline-hook</string>
+    <string name="action_hook_recovery_summary">При следующем запуске Aevix не будет внедряться в это приложение. Чтобы применить настройку, принудительно остановите и снова откройте приложение. Системная libart.so останется загруженной обычным образом.</string>
+    <string name="action_hook_recovery_enabled">Восстановление hook включено для %1$s. Чтобы применить настройку, принудительно остановите и снова откройте приложение.</string>
+    <string name="action_hook_recovery_disabled">Восстановление hook выключено для %1$s. Чтобы применить настройку, принудительно остановите и снова откройте приложение.</string>
+    <string name="action_hook_recovery_save_failed">Не удалось сохранить настройку восстановления hook для %1$s.</string>
 </resources>
