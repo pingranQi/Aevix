@@ -92,6 +92,8 @@
     <string name="status_notification_summary">A persistent notification showing that Aevix is running.</string>
     <string name="force_launcher_icons">Stop apps hiding their launcher icons</string>
     <string name="force_launcher_icons_summary">Since Android 10, an app that hides its own launcher icon gets one back that opens its app info page. Turn this off to let it stay hidden — your launcher may not catch up until it restarts. Apps that never had a launcher icon, including most modules, are unaffected.</string>
+    <string name="api_protection_title">API call protection</string>
+    <string name="api_protection_summary">Renames Xposed API classes in the framework and module DEX files so runtime-loaded code cannot resolve them. Modules that dynamically load hook classes may stop working.</string>
     <!-- Home: the community feed -->
     <string name="home_quarter_title">Recent activity</string>
     <!-- Example: "7 commits by 4 people" -->

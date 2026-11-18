@@ -41,6 +41,8 @@
 
     <string name="logs_verbose_switch">详细日志</string>
     <string name="logs_verbose_enforced">正在运行的守护进程强制开启了此项。</string>
+    <string name="logs_module_switch">模块日志</string>
+    <string name="logs_module_summary">仅记录模块和 Xposed 框架的日志标签。此日志流与详细系统诊断日志相互独立。</string>
 
     <string name="logs_jump_oldest">跳到最早一行</string>
     <string name="logs_jump_newest">跳到最新一行</string>

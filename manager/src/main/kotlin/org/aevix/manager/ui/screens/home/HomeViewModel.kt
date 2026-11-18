@@ -215,6 +215,10 @@ class HomeViewModel(
     private val _hiddenIcon = MutableStateFlow(true)
     val hiddenIcon: StateFlow<Boolean> = _hiddenIcon.asStateFlow()
 
+    // API protection is a framework preference, so it belongs with the other system toggles.
+    private val _apiProtectionEnabled = MutableStateFlow(false)
+    val apiProtectionEnabled: StateFlow<Boolean> = _apiProtectionEnabled.asStateFlow()
+
     /**
      * How this manager can be opened, and how it currently is.
      *
@@ -552,6 +556,10 @@ class HomeViewModel(
             .isForcedLauncherIcons()
             .onSuccess { _hiddenIcon.value = it }
             .onFailure { e -> logW("status: launcher-icon toggle unread", e) }
+        daemon
+            .isApiProtectionEnabled()
+            .onSuccess { _apiProtectionEnabled.value = it }
+            .onFailure { e -> logW("status: API protection toggle unread", e) }
     }
 
     fun setStatusNotification(enabled: Boolean) {
@@ -582,6 +590,20 @@ class HomeViewModel(
                 // so a transaction that arrived is not yet a setting that changed.
                 _hiddenIcon.value = daemon.isForcedLauncherIcons().getOrDefault(force)
             }
+        }
+    }
+
+    fun setApiProtection(enabled: Boolean) {
+        viewModelScope.launch {
+            daemon.setApiProtectionEnabled(enabled)
+                .onSuccess {
+                    // Read back the stored value so the switch reflects the framework's actual state.
+                    _apiProtectionEnabled.value =
+                        daemon.isApiProtectionEnabled().getOrDefault(enabled)
+                }
+                .onFailure { e ->
+                    logE("framework: setting API protection to $enabled failed", e)
+                }
         }
     }
 
