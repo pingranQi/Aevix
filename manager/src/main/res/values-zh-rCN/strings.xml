@@ -381,7 +381,7 @@
     <string name="force_launcher_icons_summary">从 Android 10 起，隐藏了自己桌面图标的应用会被补上一个图标，点击它会打开该应用的应用信息页面。关闭此项可以让它继续保持隐藏——桌面可能要等重启之后才会更新。本来就没有桌面图标的应用不受影响，大多数模块都属于此类。</string>
     <string name="action_force_stop_failed">无法停止 %1$s。</string>
     <string name="action_hook_recovery">内联 Hook 故障恢复</string>
-    <string name="action_hook_recovery_summary">下次启动时跳过 Aevix 对此应用的注入。请强制停止并重新打开应用。系统 libart.so 会保持正常加载，不会被卸载或隐藏。</string>
+    <string name="action_hook_recovery_summary">下次启动时跳过 Aevix 对此应用的注入。请强制停止并重新打开应用。下次启动时，Aevix 将跳过对这个应用的注入，因此 Xposed 模块也不会在此应用中加载。请强制停止并重新打开应用以套用。系统 libart.so 会保持正常加载，不会被卸载或隐藏。</string>
     <string name="action_hook_recovery_enabled">已为 %1$s 启用 Hook 故障恢复。请强制停止并重新打开应用。</string>
     <string name="action_hook_recovery_disabled">已为 %1$s 关闭 Hook 故障恢复。请强制停止并重新打开应用。</string>
     <string name="action_hook_recovery_save_failed">无法保存 %1$s 的 Hook 故障恢复设置。</string>
