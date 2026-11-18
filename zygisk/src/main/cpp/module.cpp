@@ -8,6 +8,9 @@
 #include <sys/system_properties.h>
 #include <unistd.h>
 
+#include <fstream>
+#include <string>
+
 #include <zygisk.hpp>
 
 #include "ipc_bridge.h"
@@ -29,6 +32,29 @@ constexpr uid_t kHostPackageUid = INJECTED_PACKAGE_UID;
 const char *const kHostPackageName = INJECTED_PACKAGE_NAME;
 const char *const kManagerPackageName = MANAGER_PACKAGE_NAME;
 constexpr uid_t GID_INET = 3003;  // Android's Internet group ID.
+
+constexpr char kRecoveryAppsPath[] = "/data/adb/aevix/recovery_apps";
+
+// Package-scoped opt-in. Missing/unreadable config means disabled. Never unmap libart.so:
+// ART owns live runtime state and its mappings cannot safely be removed from a running process.
+bool IsRecoveryEnabledFor(std::string process_name) {
+    const auto suffix = process_name.find(':');
+    if (suffix != std::string::npos) process_name.resize(suffix);
+    if (process_name.empty()) return false;
+
+    std::ifstream input(kRecoveryAppsPath);
+    if (!input.is_open()) return false;
+
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') continue;
+        const auto last = line.find_last_not_of(" \t\r");
+        const std::string_view entry(line.data() + first, last - first + 1);
+        if (entry == process_name) return true;
+    }
+    return false;
+}
 
 enum RuntimeFlags : uint32_t {
     // Flags defined by NeoZygisk
@@ -125,6 +151,7 @@ private:
     // State managed within the class instance for each forked process.
     bool should_inject_ = false;
     bool is_manager_app_ = false;
+    bool recovery_mode_ = false;
 };
 
 // =========================================================================================
@@ -226,6 +253,7 @@ void AevixModule::preAppSpecialize(zygisk::AppSpecializeArgs *args) {
     // Reset state for this new process fork.
     should_inject_ = false;
     is_manager_app_ = false;
+    recovery_mode_ = false;
 
     // --- Manager App Special Handling ---
     // We identify our manager app by a special UID and
@@ -274,6 +302,11 @@ void AevixModule::preAppSpecialize(zygisk::AppSpecializeArgs *args) {
     // --- Injection Decision Logic ---
     // Determine if the current process is a valid target for injection.
     lsplant::JUTFString nice_name_str(env_, args->nice_name);
+
+    recovery_mode_ = IsRecoveryEnabledFor(nice_name_str.get());
+    if (recovery_mode_) {
+        LOGW("Recovery mode enabled for '{}': ART/JNI hooks will be skipped.", nice_name_str.get());
+    }
 
     // An app without a data directory cannot be a target.
     if (!args->app_data_dir) {
@@ -347,10 +380,14 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     }
     close(dex_fd);  // The FD is duplicated by mmap, we can close it now.
 
-    // Initialize ART hooks via the native library.
-    this->InitArtHooker(env_, init_info_);
-    // Initialize JNI hooks via the native library.
-    this->InitHooks(env_);
+    // Recovery mode keeps framework loading but avoids touching ART hook state.
+    // It intentionally does not attempt to unmap or hide libart.so.
+    if (!recovery_mode_) {
+        this->InitArtHooker(env_, init_info_);
+        this->InitHooks(env_);
+    } else {
+        LOGW("Skipping LSPlant and JNI hook initialization for '{}'.", nice_name_str.get());
+    }
     // Find the Java entrypoint.
     this->SetupEntryClass(env_);
 
