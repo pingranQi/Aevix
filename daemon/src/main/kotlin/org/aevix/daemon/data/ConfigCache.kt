@@ -193,7 +193,7 @@ object ConfigCache {
       val enabledRows = ModuleDatabase.enabledModuleRows()
       // User enumeration is one Binder round trip per rebuild, not one per enabled module. The
       // snapshot is immutable for this rebuild and is also the boundary for per-user module state.
-      val users = userManager?.getRealUsers() ?: emptyList()
+      val users = if (enabledRows.isEmpty()) emptyList() else userManager?.getRealUsers() ?: emptyList()
       if (enabledRows.isNotEmpty() && users.isEmpty()) {
         Log.w(TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
         return

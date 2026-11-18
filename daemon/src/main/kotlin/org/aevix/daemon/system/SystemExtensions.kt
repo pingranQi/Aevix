@@ -14,7 +14,9 @@ import android.os.Build
 import android.os.IUserManager
 import android.util.Log
 import java.io.File
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import android.os.RemoteException
 import java.util.stream.Collectors
 import org.aevix.daemon.utils.getRealUsers
 
@@ -222,12 +224,22 @@ private fun IPackageManager.getInstalledPackagesReflect(
     userId: Int
 ): List<PackageInfo>? {
   val method = getInstalledPackagesMethod ?: return null
-  return runCatching {
-        val result = method.invoke(this, flags, userId)
-        @Suppress("UNCHECKED_CAST") (result as? ParceledListSlice<PackageInfo>)?.list
-      }
-      .onFailure { Log.e(TAG, "Reflection call failed", it.cause ?: it) }
-      .getOrNull()
+  return try {
+    val result = method.invoke(this, flags, userId)
+    @Suppress("UNCHECKED_CAST")
+    (result as? ParceledListSlice<PackageInfo>)?.list
+  } catch (e: InvocationTargetException) {
+    // Preserve the Binder failure so callers can distinguish a dead package service from an
+    // empty package list. Runtime failures and Errors retain their original type as well.
+    when (val cause = e.targetException) {
+      is RemoteException -> throw cause
+      is RuntimeException -> throw cause
+      is Error -> throw cause
+      else -> throw IllegalStateException("getInstalledPackages failed", cause)
+    }
+  } catch (e: ReflectiveOperationException) {
+    throw IllegalStateException("getInstalledPackages is inaccessible", e)
+  }
 }
 
 fun IPackageManager.getInstalledPackagesFromAllUsers(
