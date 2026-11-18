@@ -296,6 +296,14 @@ class DaemonClient(private val serviceState: StateFlow<IManagerService?>) {
         it.getPackageUsers(packageName).toList()
     }
 
+    suspend fun isInlineHookRecoveryEnabled(packageName: String): Result<Boolean> =
+        runIpc { it.isInlineHookRecoveryEnabled(packageName) }
+
+    suspend fun setInlineHookRecoveryEnabled(
+        packageName: String,
+        enabled: Boolean,
+    ): Result<Boolean> = runIpc { it.setInlineHookRecoveryEnabled(packageName, enabled) }
+
     /** A user's photo, decoded, or null when it has none. Decoded here so no descriptor escapes. */
     suspend fun getUserIcon(userId: Int): Result<Bitmap?> = runIpc { service ->
         service.getUserIcon(userId)?.use { BitmapFactory.decodeFileDescriptor(it.fileDescriptor) }
