@@ -127,7 +127,7 @@ fun SystemStatusScreen(
     // Read once per visit rather than watched: a crash cannot be recorded while this screen is on
     // screen, because the process that would record it is the one drawing it.
     var crash by remember { mutableStateOf(CrashRecorder.newest(context)) }
-    // The two switches below belong to the framework, so they are only live while it is.
+    // The framework switches below are only live while it is.
     val daemonAlive = status.daemonUsable
     val snackbars = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
