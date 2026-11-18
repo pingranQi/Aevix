@@ -23,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermissions
 import java.time.Instant
 import java.time.ZoneId
@@ -83,6 +84,7 @@ object FileSystem {
   val managerApkPath: Path = daemonApkPath.parent.resolve("manager.apk")
   val configDirPath: Path = basePath.resolve("config")
   val dbPath: File = configDirPath.resolve("modules_config.db").toFile()
+  private val inlineHookRecoveryPath = configDirPath.resolve("inline_hook_recovery_apps")
 
   @Volatile private var preloadDex: SharedMemory? = null
   private var preloadDexObfuscate: Boolean? = null
@@ -100,6 +102,64 @@ object FileSystem {
         }
         .onFailure { Log.e(TAG, "Failed to initialize directories", it) }
     ensureManagerApkLabel()
+  }
+
+  private val recoveryPackageName = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
+
+  @Synchronized
+  fun isInlineHookRecoveryEnabled(packageName: String): Boolean {
+    if (!recoveryPackageName.matches(packageName)) return false
+    return readInlineHookRecoveryApps()?.contains(packageName) ?: false
+  }
+
+  @Synchronized
+  fun setInlineHookRecoveryEnabled(packageName: String, enabled: Boolean): Boolean {
+    if (!recoveryPackageName.matches(packageName)) return false
+    val packages = readInlineHookRecoveryApps()?.toMutableSet() ?: return false
+    if (enabled) packages.add(packageName) else packages.remove(packageName)
+    return writeInlineHookRecoveryApps(packages)
+  }
+
+  private fun readInlineHookRecoveryApps(): Set<String>? =
+      try {
+        if (!Files.isRegularFile(inlineHookRecoveryPath)) {
+          emptySet()
+        } else {
+          Files.readAllLines(inlineHookRecoveryPath)
+              .asSequence()
+              .map { it.trim() }
+              .filter { recoveryPackageName.matches(it) }
+              .toSet()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to read per-app hook recovery configuration", e)
+        null
+      }
+
+  private fun writeInlineHookRecoveryApps(packages: Set<String>): Boolean {
+    val temporary = configDirPath.resolve(".inline_hook_recovery_apps.tmp")
+    return try {
+      Files.createDirectories(configDirPath)
+      val content = packages.sorted().joinToString(
+          separator = "\n",
+          postfix = if (packages.isEmpty()) "" else "\n")
+      Files.writeString(temporary, content)
+      Os.chmod(temporary.toString(), "600".toInt(8))
+      if (!SELinux.setFileContext(temporary.toString(), SYSTEM_FILE_CONTEXT)) {
+        throw IllegalStateException("Could not label hook recovery configuration as system_file")
+      }
+      Files.move(
+          temporary,
+          inlineHookRecoveryPath,
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING)
+      true
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to write per-app hook recovery configuration", e)
+      false
+    } finally {
+      runCatching { Files.deleteIfExists(temporary) }
+    }
   }
 
   /**
