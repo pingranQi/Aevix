@@ -190,7 +190,16 @@ object ConfigCache {
       // user had asked for it, the switch went off by itself, and nothing said why.
       val unloadable = mutableMapOf<String, Int>()
 
-      ModuleDatabase.enabledModuleRows().forEach { row ->
+      val enabledRows = ModuleDatabase.enabledModuleRows()
+      // User enumeration is one Binder round trip per rebuild, not one per enabled module. The
+      // snapshot is immutable for this rebuild and is also the boundary for per-user module state.
+      val users = userManager?.getRealUsers() ?: emptyList()
+      if (enabledRows.isNotEmpty() && users.isEmpty()) {
+        Log.w(TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
+        return
+      }
+
+      enabledRows.forEach { row ->
         val pkgName = row.packageName
         var apkPath = row.apkPath
         if (pkgName == "lspd") return@forEach
@@ -198,7 +207,6 @@ object ConfigCache {
         val oldModule = oldState.modules[pkgName]
 
         var pkgInfo: android.content.pm.PackageInfo? = null
-        val users = userManager?.getRealUsers() ?: emptyList()
         // No users means the question could not be asked, not that the answer is no. `getRealUsers`
         // swallows a null binder and any failure of `IUserManager.getUsers` into an empty list, and
         // an empty list here sends *every* enabled module down the not-installed path below — which

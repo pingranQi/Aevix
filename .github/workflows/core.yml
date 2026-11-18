@@ -50,6 +50,14 @@ jobs:
       - name: Test dex2oat recursion guard
         run: python3 dex2oat/tests/test_wrapper_recursion.py
 
+      - name: Test OAT hook ABI fallback
+        run: python3 dex2oat/tests/test_oat_hook_abi.py
+
+      - name: Test ART primitive widening rules
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Werror -Inative/src native/tests/test_primitive_widening.cpp -o /tmp/aevix-primitive-widening
+          /tmp/aevix-primitive-widening
+
       - name: Check translations
         run: |
           python3 manager/tools/check_translations.py manager/src/main/res
@@ -135,8 +143,8 @@ jobs:
         shell: bash
         run: rm -rf $ANDROID_HOME/cmake
 
-      - name: Test process-scope security
-        run: ./gradlew :daemon:testDebugUnitTest --no-daemon --console=plain
+      - name: Test daemon and module runtime regressions
+        run: ./gradlew :daemon:testDebugUnitTest :xposed:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build with Gradle
         run: |
