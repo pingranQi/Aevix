@@ -258,19 +258,13 @@ fun IPackageManager.getInstalledPackagesFromAllUsers(
     // rewrite: carrying on leaves a list short by a whole profile that nothing downstream can
     // tell from the truth. Reachable on an ordinary device, where enumerating every package per
     // user runs the binder buffer out and answers DeadObjectException.
+    // IPackageManager's generated Kotlin stub does not expose this hidden method. Resolve its
+    // platform-specific int/long overload reflectively; API 37 uses the long-flags entry point.
+    val flagParam: Any =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) flags.toLong() else flags
     val infos =
-        if (Build.VERSION.SDK_INT >= 37) {
-          getInstalledPackagesReflect(flags.toLong(), user.id)
-              ?: throw IllegalStateException("No package list for user ${user.id}")
-        } else {
-          val slice =
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                getInstalledPackages(flags.toLong(), user.id)
-              } else {
-                getInstalledPackages(flags, user.id)
-              }
-          slice?.list ?: emptyList()
-        }
+        getInstalledPackagesReflect(flagParam, user.id)
+            ?: throw IllegalStateException("No package list for user ${user.id}")
     if (infos.isEmpty()) continue
 
     val validUserApps =

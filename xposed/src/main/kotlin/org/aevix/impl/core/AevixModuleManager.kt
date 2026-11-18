@@ -12,6 +12,7 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.service.IXposedService
 import java.io.File
 import java.lang.ref.WeakReference
+import java.util.concurrent.ConcurrentHashMap
 import org.aevix.ipc.HotReloadOutcome
 import org.aevix.ipc.LoadedModule
 import org.aevix.util.Log

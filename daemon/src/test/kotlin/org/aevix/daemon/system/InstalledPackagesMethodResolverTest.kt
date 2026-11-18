@@ -6,29 +6,34 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class InstalledPackagesMethodResolverTest {
+  class PlatformMethods {
+    fun getInstalledPackages(flags: Int, userId: Int): String = "int"
+    fun getInstalledPackages(flags: Long, userId: Int): String = "long"
+  }
+
   class Android17Methods {
     fun getInstalledPackages(flags: Long, userId: Int): String = "long"
   }
 
-  class LegacyMethods {
-    fun getInstalledPackages(flags: Int, userId: Int): String = "int"
+  @Test
+  fun prefersLongFlagsOnAndroid13AndLaterIncludingAndroid17() {
+    for (sdk in listOf(33, 36, 37)) {
+      val method = InstalledPackagesMethodResolver.resolve(PlatformMethods::class.java, sdk)
+      assertNotNull(method)
+      assertEquals(Long::class.javaPrimitiveType, method!!.parameterTypes[0])
+    }
+    assertNotNull(InstalledPackagesMethodResolver.resolve(Android17Methods::class.java, 37))
   }
 
   @Test
-  fun resolvesLongFlagsOnlyForAndroid17() {
-    assertNull(InstalledPackagesMethodResolver.resolve(Android17Methods::class.java, 36))
-    val method = InstalledPackagesMethodResolver.resolve(Android17Methods::class.java, 37)
+  fun prefersIntFlagsOnOlderAndroid() {
+    val method = InstalledPackagesMethodResolver.resolve(PlatformMethods::class.java, 32)
     assertNotNull(method)
-    assertEquals(Long::class.javaPrimitiveType, method!!.parameterTypes[0])
+    assertEquals(Int::class.javaPrimitiveType, method!!.parameterTypes[0])
   }
 
   @Test
-  fun rejectsLegacyIntOverloadOnAndroid17() {
-    assertNull(InstalledPackagesMethodResolver.resolve(LegacyMethods::class.java, 37))
-  }
-
-  @Test
-  fun returnsNullWhenAndroid17MethodIsAbsent() {
+  fun returnsNullWhenNoCompatibleOverloadExists() {
     assertNull(InstalledPackagesMethodResolver.resolve(String::class.java, 37))
   }
 }
