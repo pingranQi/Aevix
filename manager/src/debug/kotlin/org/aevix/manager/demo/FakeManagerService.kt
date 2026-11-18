@@ -236,6 +236,14 @@ class FakeManagerService(
         real?.setApiProtectionEnabled(enabled)
     }
 
+    override fun isInlineHookRecoveryEnabled(packageName: String?): Boolean =
+        real?.isInlineHookRecoveryEnabled(packageName) ?: false
+
+    override fun setInlineHookRecoveryEnabled(
+        packageName: String?,
+        enabled: Boolean,
+    ): Boolean = real?.setInlineHookRecoveryEnabled(packageName, enabled) ?: false
+
     override fun getLiveLogPart(verbose: Boolean): ParcelFileDescriptor? =
         real?.getLiveLogPart(verbose)
 
