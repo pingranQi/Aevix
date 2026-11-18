@@ -1,7 +1,7 @@
 package org.aevix.impl.core
 
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.Semaphore
 
 /**
  * Non-blocking per-key gate for lifecycle operations.
@@ -10,11 +10,11 @@ import java.util.concurrent.locks.ReentrantLock
  * code. Different keys remain independent and can progress concurrently.
  */
 internal class KeyedReloadGate<K : Any> {
-  private val locks = ConcurrentHashMap<K, ReentrantLock>()
+  private val locks = ConcurrentHashMap<K, Semaphore>()
 
   fun tryAcquire(key: K): AutoCloseable? {
-    val lock = locks.computeIfAbsent(key) { ReentrantLock() }
-    if (!lock.tryLock()) return null
-    return AutoCloseable { lock.unlock() }
+    val semaphore = locks.computeIfAbsent(key) { Semaphore(1) }
+    if (!semaphore.tryAcquire()) return null
+    return AutoCloseable { semaphore.release() }
   }
 }

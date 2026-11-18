@@ -12,7 +12,9 @@ class KeyedReloadGateTest {
     assertNotNull(first)
     assertNull(gate.tryAcquire("module"))
     first!!.close()
-    assertNotNull(gate.tryAcquire("module"))
+    val second = gate.tryAcquire("module")
+    assertNotNull(second)
+    second!!.close()
   }
 
   @Test
