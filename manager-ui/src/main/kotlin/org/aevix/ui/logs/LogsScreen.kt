@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.UnfoldLess
 import androidx.compose.material.icons.rounded.UnfoldMore
@@ -49,7 +50,6 @@ import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.VerticalAlignBottom
 import androidx.compose.material.icons.rounded.VerticalAlignTop
-import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.automirrored.rounded.WrapText
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -749,7 +749,6 @@ private fun LogSettingsSheet(
     val enforced by viewModel.verboseEnforced.collectAsStateWithLifecycle()
     val inlineTraces by viewModel.tracesInline.collectAsStateWithLifecycle()
     val moduleLogEnabled by viewModel.moduleLogEnabled.collectAsStateWithLifecycle()
-    val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
     val sheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
     val resetKind = viewModel.resetKind
 
@@ -762,30 +761,6 @@ private fun LogSettingsSheet(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
                 )
-
-                if (viewModel.canConfigureApiProtection) {
-                    ListItem(
-                        modifier = Modifier.clickable {
-                            viewModel.setApiProtection(!apiProtectionEnabled)
-                        },
-                        supportingContent = {
-                            Text(
-                                stringResource(R.string.logs_api_protection_summary),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        leadingContent = {
-                            Icon(Icons.Rounded.WarningAmber, contentDescription = null)
-                        },
-                        trailingContent = {
-                            Switch(
-                                checked = apiProtectionEnabled,
-                                onCheckedChange = { viewModel.setApiProtection(it) },
-                            )
-                        },
-                        colors = sheetRowColors,
-                    ) { Text(stringResource(R.string.logs_api_protection_switch)) }
-                }
 
                 if (viewModel.canConfigureModuleLog) {
                     ListItem(

@@ -175,11 +175,7 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
     private val _moduleLogEnabled = MutableStateFlow(false)
     val moduleLogEnabled: StateFlow<Boolean> = _moduleLogEnabled.asStateFlow()
 
-    private val _apiProtectionEnabled = MutableStateFlow(false)
-    val apiProtectionEnabled: StateFlow<Boolean> = _apiProtectionEnabled.asStateFlow()
-
     val canConfigureModuleLog: Boolean = source.canConfigureModuleLog
-    val canConfigureApiProtection: Boolean = source.canConfigureApiProtection
 
     val wordWrap: StateFlow<Boolean> = source.wordWrap
 
@@ -203,9 +199,6 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
         }
         if (source.canConfigureModuleLog) {
             viewModelScope.launch { _moduleLogEnabled.value = source.isModuleLogEnabled() }
-        }
-        if (source.canConfigureApiProtection) {
-            viewModelScope.launch { _apiProtectionEnabled.value = source.isApiProtectionEnabled() }
         }
     }
 
@@ -645,17 +638,6 @@ class LogsViewModel(private val source: LogSource) : ViewModel() {
                 }
             _moduleLogEnabled.value = actual
             if (actual) refresh(LogTab.MODULES)
-        }
-    }
-
-    fun setApiProtection(enabled: Boolean) {
-        viewModelScope.launch {
-            val actual = runCatching { source.setApiProtectionEnabled(enabled) }
-                .getOrElse {
-                    Log.e(TAG, "logs: setting API protection to $enabled failed", it)
-                    !enabled
-                }
-            _apiProtectionEnabled.value = actual
         }
     }
 

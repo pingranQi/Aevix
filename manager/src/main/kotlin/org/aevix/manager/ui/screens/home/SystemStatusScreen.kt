@@ -97,6 +97,7 @@ fun SystemStatusScreen(
     val context = LocalContext.current
     val statusNotification by viewModel.statusNotification.collectAsStateWithLifecycle()
     val hiddenIcon by viewModel.hiddenIcon.collectAsStateWithLifecycle()
+    val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
     val presence by viewModel.presence.collectAsStateWithLifecycle()
     val managerInstall by viewModel.managerInstall.collectAsStateWithLifecycle()
 
@@ -126,7 +127,7 @@ fun SystemStatusScreen(
     // Read once per visit rather than watched: a crash cannot be recorded while this screen is on
     // screen, because the process that would record it is the one drawing it.
     var crash by remember { mutableStateOf(CrashRecorder.newest(context)) }
-    // The two switches below belong to the framework, so they are only live while it is.
+    // The framework switches below are only live while it is.
     val daemonAlive = status.daemonUsable
     val snackbars = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -226,6 +227,15 @@ fun SystemStatusScreen(
                     checked = hiddenIcon,
                     enabled = daemonAlive,
                     onCheckedChange = viewModel::setForcedLauncherIcons,
+                )
+            }
+            item {
+                FrameworkToggle(
+                    title = stringResource(R.string.api_protection_title),
+                    subtitle = stringResource(R.string.api_protection_summary),
+                    checked = apiProtectionEnabled,
+                    enabled = daemonAlive,
+                    onCheckedChange = viewModel::setApiProtection,
                 )
             }
 
