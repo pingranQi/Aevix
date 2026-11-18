@@ -49,4 +49,5 @@ dependencies {
     compileOnly(libs.androidx.annotation)
     compileOnly(libs.libxposed.annotation)
     compileOnly(projects.hiddenapi.stubs)
+    testImplementation("junit:junit:4.13.2")
 }

@@ -12,8 +12,6 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.service.IXposedService
 import java.io.File
 import java.lang.ref.WeakReference
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.locks.ReentrantLock
 import org.aevix.ipc.HotReloadOutcome
 import org.aevix.ipc.LoadedModule
 import org.aevix.util.Log
@@ -48,8 +46,9 @@ object AevixModuleManager {
 
     private val generations = ConcurrentHashMap<String, Generation>()
 
-    // Reloads are serialized per module within this process; the daemon serializes per target.
-    private val reloadLocks = ConcurrentHashMap<String, ReentrantLock>()
+    // Reloads are serialized per module within this process; different modules may reload in
+    // parallel. The lease owns unlock so every exit path releases exactly once.
+    private val reloadGate = KeyedReloadGate<String>()
 
     /** The class loader a loaded module runs in, or null if no generation is loaded for it. */
     fun getModuleClassLoader(packageName: String): ClassLoader? = generations[packageName]?.classLoader
@@ -210,20 +209,18 @@ object AevixModuleManager {
     ): HotReloadOutcome {
         val packageName =
             modulePackageName ?: return unsupported("Hot reload was requested without a module")
-        val lock = reloadLocks.computeIfAbsent(packageName) { ReentrantLock() }
-        if (!lock.tryLock()) {
-            return outcome(
+        val lease = reloadGate.tryAcquire(packageName)
+            ?: return outcome(
                 IXposedService.HOT_RELOAD_IN_PROGRESS,
                 "A reload of $packageName is already running in this process",
             )
-        }
         return try {
             runHotReload(packageName, extras, newModule)
         } catch (t: Throwable) {
             Log.e(TAG, "Hot reload of $packageName failed", t)
             failed(describe(t))
         } finally {
-            lock.unlock()
+            lease.close()
         }
     }
 
