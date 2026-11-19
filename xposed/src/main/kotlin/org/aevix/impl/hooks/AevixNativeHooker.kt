@@ -160,14 +160,21 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
     private val returnType = if (method is Method) method.returnType else null
 
     /**
-     * Invoked by C++ via JNI. A failure in a framework hook must not escape into system_server;
-     * fall back to the original method, while preserving an exception thrown by that original.
+     * Invoked by C++ via JNI.
+     *
+     * Nothing in here is allowed to throw. This runs inside the process that called the hooked
+     * method — for a framework hook installed in system_server, that is the process every other
+     * process on the device depends on. An exception raised here does not read as "a hook failed";
+     * it reads as the hooked method throwing where no caller expects it, and for
+     * `handleSystemServerProcess` or `startBootstrapServices` that ends the system server and
+     * restarts the framework. So the body is contained, and every failure degrades to running the
+     * original.
      */
     fun callback(args: Array<Any?>): Any? {
         return try {
             dispatch(args)
         } catch (t: Throwable) {
-            Utils.logE("Hook chain for " + method + " failed; running the original", t)
+            Utils.logE("Hook chain for $method failed; running the original", t)
             try {
                 if (isStatic) {
                     invokeOriginalSafely(null, args)
@@ -178,6 +185,8 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
                     )
                 }
             } catch (fallback: Throwable) {
+                // The original threw as well. That is its own answer and the caller is entitled to
+                // it, so it is handed over rather than swallowed.
                 throw fallback
             }
         }
@@ -226,17 +235,37 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
         return coerceReturn(result)
     }
 
-    /** Ensures the native trampoline receives a value compatible with the hooked return type. */
+    /**
+     * Converts what the chain returned into something the trampoline can hand back.
+     *
+     * The trampoline is a native call into a method whose return type it has already committed to,
+     * so `null` where an `int` is expected and a `String` where an `Object` is expected are both
+     * read as memory it can reinterpret — not as a type error it can report. A wrong value here
+     * therefore has to be turned into a right-typed one before it gets there, and a hook that
+     * returns nothing for a primitive gets the primitive's zero value.
+     */
     private fun coerceReturn(result: Any?): Any? {
-        val type = returnType ?: return result
-        if (type == Void.TYPE || !type.isPrimitive && result == null) return result
-        if (result == null) return defaultValueOf(type)
-        if (HookBridge.instanceOf(result, type) || isBoxingCompatible(result, type)) return result
+        val returnType = this.returnType ?: return result
+        if (returnType == Void.TYPE) return result
 
-        Utils.logD("Hook return type mismatch. Expected " + type.name + ", got " + result.javaClass.name)
-        return if (type.isPrimitive) defaultValueOf(type) else null
+        if (result == null) {
+            if (!returnType.isPrimitive) return null
+            Utils.logD(
+                "Hook returned null for primitive ${returnType.name} on $method; using the default value"
+            )
+            return defaultValueOf(returnType)
+        }
+
+        // Use the JNI bridge for the most reliable type check across ClassLoaders
+        if (HookBridge.instanceOf(result, returnType) || isBoxingCompatible(result, returnType)) {
+            return result
+        }
+
+        Utils.logD("Hook return type mismatch. Expected ${returnType.name}, got ${result.javaClass.name}")
+        return if (returnType.isPrimitive) defaultValueOf(returnType) else null
     }
 
+    /** The zero value of a primitive type, which is what an unhelpful hook falls back to. */
     private fun defaultValueOf(type: Class<*>): Any =
         when (type) {
             Int::class.javaPrimitiveType -> 0
@@ -249,7 +278,6 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
             Short::class.javaPrimitiveType -> 0.toShort()
             else -> 0
         }
-    }
 
     /** Handles primitive boxing compatibility (e.g., Integer object vs int primitive). */
     private fun isBoxingCompatible(obj: Any, targetType: Class<*>): Boolean {
