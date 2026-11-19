@@ -35,3 +35,22 @@ They are included as git submodules to ensure version consistency and timely upd
 ## Patches
 
 -   [patches/shadowhook](patches/shadowhook): removes the mandatory dependency on `libshadowhook_nothing.so`.
+
+## Inline hook backend selection
+
+Dobby remains the default on every ABI. On ARM64 and ARM32, ShadowHook can be selected per
+process with the persistent Android property:
+
+```sh
+su -c 'setprop persist.aevix.inline_hook_backend shadowhook'
+```
+
+Restore Dobby with:
+
+```sh
+su -c 'setprop persist.aevix.inline_hook_backend dobby'
+```
+
+The property is read once when each app process is specialized. Restart target apps after
+changing it. If ShadowHook initialization or an individual hook fails, that hook falls back
+to Dobby. x86 and x86_64 always use Dobby.

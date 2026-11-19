@@ -13,6 +13,22 @@
 
 #include "ipc_bridge.h"
 
+
+namespace {
+void ConfigureInlineHookBackendFromSystemProperty() {
+    char value[PROP_VALUE_MAX] = {};
+    const int length = __system_property_get("persist.aevix.inline_hook_backend", value);
+    const bool use_shadowhook =
+        length > 0 && (std::strcmp(value, "shadowhook") == 0 || std::strcmp(value, "1") == 0);
+#if defined(__aarch64__) || defined(__arm__)
+    SetInlineHookBackend(use_shadowhook ? kInlineHookBackendShadowHook : kInlineHookBackendDobby);
+#else
+    (void)use_shadowhook;
+    SetInlineHookBackend(kInlineHookBackendDobby);
+#endif
+}
+}  // namespace
+
 namespace vector::native::module {
 
 // --- Process UID Constants ---
@@ -349,6 +365,10 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     // from before the two were bundled still answers, so ask for it the long way round instead.
     if (obfs_map.empty()) obfs_map = ipc_bridge.FetchObfuscationMap(env_, binder.get());
     ConfigBridge::GetInstance()->obfuscation_map(std::move(obfs_map));
+
+    // Select one backend for this process before LSPlant and JNI hooks are installed.
+    // The property is read once per fork; backend changes require restarting the target process.
+    ConfigureInlineHookBackendFromSystemProperty();
 
     const bool invalidate_art_inline_hooks_requested =
         !is_manager_app_ && ipc_bridge.ShouldInvalidateArtInlineHooks(env_, binder.get());
