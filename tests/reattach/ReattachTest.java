@@ -42,7 +42,9 @@ public class ReattachTest {
     private static <T> T field(Class<?> type, String name) throws Exception {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);
-        return (T) field.get(null);
+        Object receiver = Modifier.isStatic(field.getModifiers())
+                ? null : type.getField("INSTANCE").get(null);
+        return (T) field.get(receiver);
     }
 
     private static Bundle bundle(String key, Map<String, Object> values) {
