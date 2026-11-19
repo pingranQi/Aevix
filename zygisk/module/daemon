@@ -57,4 +57,15 @@ fi
 # The fallback keeps a device that somehow lacks the explicit name working.
 app_process=/system/bin/app_process64
 [ -x "$app_process" ] || app_process=/system/bin/app_process
-exec "$app_process" $java_options /system/bin --nice-name=Aevixd org.aevix.daemon.AevixDaemon "$@" >/dev/null 2>&1
+# The daemon opens its own log only after main begins. Capture failures that happen before that
+# point (classpath rejection, startup crash, or early exit) so a missing daemon is diagnosable.
+logDir="/data/adb/lspd/log"
+bootstrapLog="$logDir/bootstrap.log"
+mkdir -p "$logDir" 2>/dev/null
+( : >>"$bootstrapLog" ) 2>/dev/null || bootstrapLog=/dev/null
+
+# Keep this shell as the daemon's parent so app_process exit status is recorded.
+"$app_process" $java_options /system/bin --nice-name=Aevixd org.aevix.daemon.AevixDaemon "$@" >/dev/null 2>>"$bootstrapLog"
+status=$?
+echo "Aevixd exited with code $status" >>"$bootstrapLog" 2>/dev/null
+exit $status
