@@ -178,14 +178,17 @@ class Database(context: Context? = FakeContext()) :
   }
 
   private fun wipeDatabase(db: SQLiteDatabase) {
+    // Collect first, then drop: mutating sqlite_master while its cursor is walking it can
+    // invalidate the cursor before all tables have been visited.
+    val tables = mutableListOf<String>()
     db.rawQuery(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", null)
         .use { cursor ->
           while (cursor.moveToNext()) {
-            val tableName = cursor.getString(0)
-            db.execSQL("DROP TABLE IF EXISTS `$tableName`")
+            tables.add(cursor.getString(0))
           }
         }
+    tables.forEach { db.execSQL("DROP TABLE IF EXISTS `$it`") }
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
