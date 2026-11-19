@@ -283,6 +283,12 @@ object ManagerService : IManagerService.Stub() {
   // the persisted value rather than snapping back to the build type.
   override fun isVerboseLogEnabled() = PreferenceStore.isVerboseLogEnabled()
 
+  override fun getInvalidateArtInlineHookPackages(): MutableList<String> =
+      PreferenceStore.getInvalidateArtInlineHookPackages().sorted().toMutableList()
+
+  override fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Boolean =
+      PreferenceStore.setInvalidateArtInlineHooks(packageName, enabled)
+
   override fun setVerboseLogEnabled(enabled: Boolean) {
     PreferenceStore.setVerboseLog(enabled)
     if (enabled) {
