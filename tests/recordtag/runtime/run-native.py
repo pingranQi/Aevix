@@ -72,7 +72,7 @@ if len(modules) != 1:
 with zipfile.ZipFile(modules[0]) as archive:
     (out / 'framework.dex').write_bytes(archive.read('framework/vector.dex'))
 
-names = ['org.aevix.impl.hooks.VectorMethodInvoker', 'org.aevix.impl.hooks.VectorHookRecord']
+names = ['org.aevix.impl.hooks.AevixMethodInvoker', 'org.aevix.impl.hooks.AevixHookRecord']
 if variant == 'release':
     mapping = (root / 'zygisk/build/outputs/mapping/release/mapping.txt').read_text()
     for index, name in enumerate(names):
