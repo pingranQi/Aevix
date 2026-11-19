@@ -220,6 +220,14 @@ class DaemonClient(private val serviceState: StateFlow<IManagerService?>) {
     suspend fun setVerboseLogEnabled(enabled: Boolean): Result<Unit> = runIpc { it.setVerboseLogEnabled(enabled)
     }
 
+    suspend fun getInvalidateArtInlineHookPackages(): Result<List<String>> = runIpc {
+        it.invalidateArtInlineHookPackages.orEmpty()
+    }
+
+    suspend fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Result<Boolean> =
+        runIpc { it.setInvalidateArtInlineHooks(packageName, enabled) }
+
+
     suspend fun isModuleLogEnabled(): Result<Boolean> = runIpc { it.isModuleLogEnabled }
 
     suspend fun setModuleLogEnabled(enabled: Boolean): Result<Unit> = runIpc {
