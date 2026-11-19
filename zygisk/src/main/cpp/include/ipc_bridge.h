@@ -95,6 +95,9 @@ public:
      */
     std::map<std::string, std::string> FetchObfuscationMap(JNIEnv *env, jobject binder);
 
+    /** Query the daemon's per-process ART inline-hook compatibility policy. */
+    bool ShouldInvalidateArtInlineHooks(JNIEnv *env, jobject binder);
+
     /**
      * @brief Sets up the JNI hook to intercept Binder transactions.
      *
