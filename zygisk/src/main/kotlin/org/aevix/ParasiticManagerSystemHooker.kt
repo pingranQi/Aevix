@@ -158,8 +158,7 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                                                 .set(holder, redirectedInfo)
                                         }
                                         .onFailure {
-                                            android.util.Log.e(
-                                                "AevixDiag", "failed to set redirected ActivityInfo back", it)
+                                            Utils.logE("Failed to write redirected ActivityInfo back", it)
                                         }
                                     return@intercept holder
                                 }
