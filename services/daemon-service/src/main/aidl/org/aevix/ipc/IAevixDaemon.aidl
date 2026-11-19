@@ -1,6 +1,7 @@
 package org.aevix.ipc;
 
 import org.aevix.ipc.IFrameworkService;
+import org.aevix.ipc.IModuleService;
 
 /**
  * The daemon's front door, reached from a newly specialized process through the zygisk bridge.
@@ -43,4 +44,11 @@ interface IAevixDaemon {
 
     /** Asks the daemon to bring the manager up before it is needed. */
     boolean preStartManager();
+
+    /**
+     * Rebinds an already loaded modern module after the daemon restarts. Only a registered
+     * system_server may call this. The reported version describes the generation still in memory.
+     */
+    @nullable IModuleService reconnectSystemModule(String packageName, long loadedVersionCode,
+                                                   boolean hotReloadable);
 }
