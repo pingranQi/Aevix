@@ -266,6 +266,16 @@ static constexpr size_t kMaxMapOffset = LP_SELECT(0xa0, 0x140);
 // The map holds one id per string in the document's own pool, so a count this large is not a
 // candidate but a coincidence.
 static constexpr size_t kMaxMapEntries = 0x4000;
+
+// Bounds on the attribute array described by the XML document. attributeSize is the loop stride,
+// so zero would never advance and an oversized span could walk beyond the parsed tree.
+static constexpr uint16_t kMinAttributeSize = 20;
+static constexpr uint16_t kMaxAttributeSize = 0x100;
+static constexpr uint16_t kMinAttributeStart = 20;
+static constexpr uint16_t kMaxAttributeStart = 0x1000;
+static constexpr size_t kMaxAttributes = 0x800;
+static constexpr size_t kMaxAttributesSpan = 0x10000;
+static constexpr size_t kMaxAttributeNameLength = 0x1000;
 // Where the search landed: zero until it has run, kMapUnusable once it has given up. Inflation is
 // not single threaded - RemoteViews and AsyncLayoutInflater both do it off the main thread - so the
 // one variable that gates a raw write into framework memory is not left to luck.
@@ -386,6 +396,12 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
 
     if (parser == nullptr) return;
 
+    // The Java side registers the rewrite independently of native initialization. If symbol
+    // resolution failed, do not call through null function pointers in the process inflating XML.
+    if (ResXMLParser_next == nullptr || ResXMLParser_restart == nullptr ||
+        ResXMLParser_getAttributeNameID == nullptr)
+        return;
+
     // Everything behind the parser is reached through the framework's own accessors: the tree used
     // to be read at fixed offsets, which stopped describing it in Android 10 and silently skipped
     // the whole attribute name half of this rewrite from then on. Without those accessors only the
@@ -404,7 +420,19 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
         switch (ResXMLParser_next(parser)) {
         case android::ResXMLParser::START_TAG:
             tag = (android::ResXMLTree_attrExt *)parser->mCurExt;
+            if (tag == nullptr) continue;
             attrCount = tag->attributeCount;
+
+            // Validate the document-controlled stride and complete attribute span before walking.
+            if (attrCount == 0 || attrCount > kMaxAttributes) continue;
+            if (tag->attributeSize < kMinAttributeSize ||
+                tag->attributeSize > kMaxAttributeSize) continue;
+            if (tag->attributeStart < kMinAttributeStart ||
+                tag->attributeStart > kMaxAttributeStart) continue;
+            const size_t attrsSpan = tag->attributeSize * attrCount;
+            if (tag->attributeStart + attrsSpan > kMaxAttributesSpan) continue;
+            if (!IsMapped(reinterpret_cast<uintptr_t>(tag) + tag->attributeStart, attrsSpan))
+                continue;
             // Loop through all attributes of the current XML tag.
             for (size_t idx = 0; idx < attrCount; idx++) {
                 auto attr =
@@ -428,7 +456,8 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
                     auto attrName = strings->stringAt(attrNameID);
                     // An index the pool cannot decode comes back empty, and NewString(nullptr, 0)
                     // is a JNI misuse that aborts the process under CheckJNI.
-                    if (attrName.data_ != nullptr) {
+                    if (attrName.data_ != nullptr &&
+                        attrName.length_ <= kMaxAttributeNameLength) {
                         jstring attrNameStr =
                             env->NewString((const jchar *)attrName.data_, attrName.length_);
                         if (env->ExceptionCheck()) goto leave;  // Critical check
