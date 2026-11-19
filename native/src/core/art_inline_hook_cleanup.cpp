@@ -225,9 +225,9 @@ bool PreparePreservedPagesForRewrite(uintptr_t mapping_start, uintptr_t mapping_
             return false;
         }
         if (mprotect(reinterpret_cast<void *>(page.address), page_size, original_protection) != 0) {
-            PLOGE("Cannot restore protection for preserved libart page at {}",
+            PLOGE("Cannot restore protection for preserved libart page at {}; terminating rather than continue with changed page permissions",
                   reinterpret_cast<void *>(page.address));
-            return false;
+            std::abort();
         }
     }
     return true;
@@ -340,12 +340,14 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         uintptr_t page_start = mapping_start;
         size_t segment_modified_pages = 0;
         size_t segment_restored_bytes = 0;
+        bool page_scan_valid = true;
         while (page_start < segment_end) {
             const uintptr_t next_page = page_start + page_size;
             if (next_page < page_start) {
                 LOGE("Page range overflow while invalidating libart.so");
                 if (any_segment_replaced) std::abort();
-            success = false;
+                success = false;
+                page_scan_valid = false;
                 break;
             }
 
@@ -364,6 +366,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             page_start = next_page;
         }
 
+        if (!page_scan_valid) continue;
         if (segment_modified_pages == 0) continue;
 
         const size_t mapping_span = first_page_prefix + segment_size;
@@ -419,6 +422,10 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         result.restored_bytes += segment_restored_bytes;
     }
 
+    if (!success && any_segment_replaced) {
+        LOGE("ART invalidation encountered an error after replacing at least one executable segment; terminating rather than continue with a partially restored libart.so");
+        std::abort();
+    }
     munmap(file_map, file_size);
     close(fd);
     return success && result.executable_segments > 0;
