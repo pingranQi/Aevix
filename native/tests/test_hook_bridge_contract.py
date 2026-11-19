@@ -41,3 +41,14 @@ assert "hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty
 # JNI exceptions raised while reading or converting an argument abort before invoking the target.
 assert "if (env->ExceptionCheck())" in source
 assert "StoreWidened(env, *wrapper, declared, element, a[i]);" in source
+
+# The optional per-process compatibility query must not leave a Java exception pending when the
+# daemon dies or returns a malformed reply; postAppSpecialize continues making JNI calls afterwards.
+ipc_source = Path("zygisk/src/main/cpp/ipc_bridge.cpp").read_text()
+policy_query = ipc_source.split(
+    "bool IPCBridge::ShouldInvalidateArtInlineHooks", 1
+)[1].split(
+    "jboolean IPCBridge::ExecTransact_Replace", 1
+)[0]
+assert policy_query.count("env->ExceptionCheck()") >= 3
+assert policy_query.count("env->ExceptionClear()") >= 3
