@@ -413,10 +413,10 @@ object FileSystem {
         }
         .onFailure {
           Log.e(TAG, "Failed to load module $apkPath", it)
-          return ModuleLoad.Unusable
+          return fail(ModuleLoad.Unusable)
         }
 
-    if (preLoadedDexes.isEmpty()) return ModuleLoad.Unusable
+    if (preLoadedDexes.isEmpty()) return fail(ModuleLoad.Unusable)
 
     // Apply obfuscation
     if (obfuscate) {
