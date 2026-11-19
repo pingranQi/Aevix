@@ -73,7 +73,7 @@ interface IManagerService {
      * transaction ids follow declaration order, this number is the only thing standing between a
      * mismatched pair and a call that lands on the wrong method.</p>
      */
-    const int PROTOCOL_VERSION = 4;
+    const int PROTOCOL_VERSION = 5;
 
     /**
      * Which generation of this interface the daemon implements, never below 1.
