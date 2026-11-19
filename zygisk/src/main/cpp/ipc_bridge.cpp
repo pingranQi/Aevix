@@ -328,18 +328,23 @@ lsplant::ScopedLocalRef<jobject> IPCBridge::RequestSystemServerBinder(
     auto service_name = lsplant::ScopedLocalRef(env, env->NewStringUTF(bridgeServiceName.data()));
     lsplant::ScopedLocalRef<jobject> binder = {env, nullptr};
 
-    // The daemon process and system_server specialization run in parallel.
-    // On slower devices, the daemon may take several seconds to call addService.
-    // We poll for up to 10 seconds to ensure the early IPC channel for system_server is available.
+    // The daemon process and system_server specialization run in parallel. A name alone is
+    // not a successful rendezvous: during restart it may still resolve to an old proxy or service.
     const int max_retry = 10;
     for (int i = 0; i < max_retry; ++i) {
         binder = lsplant::JNI_CallStaticObjectMethod(env, service_manager_class_,
                                                      get_service_method_, service_name.get());
-        if (binder) {
-            LOGI("Got system server binder via {} on attempt {}.", bridgeServiceName.data(), i + 1);
-            return binder;
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        } else if (binder) {
+            auto framework = RequestManagerBinderFromSystemServer(env, binder.get());
+            if (framework) {
+                LOGI("Got system server framework via {} on attempt {}.",
+                     bridgeServiceName.data(), i + 1);
+                return framework;
+            }
         }
-        LOGW("Failed to get system server binder via {}, will retry in 1 second...",
+        LOGW("No completed system_server handshake via {}, will retry in 1 second...",
              bridgeServiceName.data());
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -368,6 +373,10 @@ lsplant::ScopedLocalRef<jobject> IPCBridge::RequestManagerBinderFromSystemServer
                                                   parcels.reply.get(), 0);
 
     lsplant::ScopedLocalRef<jobject> result_binder = {env, nullptr};
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return result_binder;
+    }
     if (success) {
         lsplant::JNI_CallVoidMethod(env, parcels.reply.get(), read_exception_method_);
         if (env->ExceptionCheck()) {
