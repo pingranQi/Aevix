@@ -424,4 +424,9 @@
     <string name="action_install_other_user_prompt_app">選擇要為其安裝此應用程式的使用者。</string>
     <string name="action_installed_other_user">已為 %1$s 安裝。</string>
     <string name="action_install_other_user_failed">無法為 %1$s 安裝。</string>
+    <string name="action_invalidate_art_inline_hooks">ART 內聯 HOOK 相容模式</string>
+    <string name="action_invalidate_art_inline_hooks_summary">在每個選取的應用程式中全域使 Vector 的 ART 內聯 HOOK 失效，不受作用於該應用程式的模組或 HOOK 數量影響。某些模組可能停止運作，應用程式也可能出現異常或崩潰。每個應用程式下次啟動時生效。</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">已為 %1$s 啟用 ART 內聯 HOOK 相容模式。</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">已為 %1$s 停用 ART 內聯 HOOK 相容模式。</string>
+    <string name="action_invalidate_art_inline_hooks_failed">無法變更 %1$s 的 ART 內聯 HOOK 相容模式。</string>
 </resources>

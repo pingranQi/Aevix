@@ -439,4 +439,9 @@
     <string name="action_install_other_user_prompt_app">Выберите пользователя, для которого установить приложение.</string>
     <string name="action_installed_other_user">Установлено для %1$s.</string>
     <string name="action_install_other_user_failed">Не удалось установить для %1$s.</string>
+    <string name="action_invalidate_art_inline_hooks">Режим совместимости инлайн-хуков ART</string>
+    <string name="action_invalidate_art_inline_hooks_summary">Глобально аннулирует инлайн-хуки ART Vector в каждом выбранном приложении независимо от числа модулей и хуков, которые его затрагивают. Некоторые модули могут перестать работать, а приложения могут работать некорректно или аварийно завершаться. Применяется при следующем запуске каждого приложения.</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">Режим совместимости инлайн-хуков ART включён для %1$s.</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">Режим совместимости инлайн-хуков ART выключён для %1$s.</string>
+    <string name="action_invalidate_art_inline_hooks_failed">Не удалось изменить режим совместимости инлайн-хуков ART для %1$s.</string>
 </resources>
