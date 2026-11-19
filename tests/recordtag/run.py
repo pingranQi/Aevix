@@ -86,7 +86,7 @@ run("debug-repeat", ["testFrameworkZipDebug", "verifyFrameworkClassesDebug"])
 if ":prepareFrameworkDexDebug UP-TO-DATE" not in (output / "debug-repeat.log").read_text():
     raise SystemExit("Repeated debug build did not reuse prepared DEX; see debug-repeat.log")
 previous = (fixture / "build/intermediates/framework_dex/debug/mergeDexDebug/classes.dex").read_bytes()
-probe = fixture / "src/main/java/org/matrix/vector/recordtest/AddedProbe.java"
+probe = fixture / "src/main/java/org/aevix/recordtest/AddedProbe.java"
 probe.write_text("package org.aevix.recordtest; public class AddedProbe { public static int value() { return 123; } }")
 run("debug-changed", ["testFrameworkZipDebug", "verifyFrameworkClassesDebug"])
 if previous == (fixture / "build/intermediates/framework_dex/debug/mergeDexDebug/classes.dex").read_bytes():
