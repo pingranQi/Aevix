@@ -52,7 +52,7 @@ class InjectedModuleService(private val packageName: String) : IModuleService.St
         "map", PreferenceStore.getModulePrefs(packageName, userId, group) as Serializable)
 
     if (callback != null) {
-      val groupCallbacks = callbacks.getOrPut(group) { ConcurrentHashMap.newKeySet() }
+      val groupCallbacks = callbacks.computeIfAbsent(group) { ConcurrentHashMap.newKeySet() }
       val subscriber = Subscriber(userId, callback)
       groupCallbacks.add(subscriber)
       runCatching { callback.asBinder().linkToDeath({ groupCallbacks.remove(subscriber) }, 0) }
