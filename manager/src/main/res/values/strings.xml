@@ -484,4 +484,7 @@
     <string name="action_invalidate_art_inline_hooks_enabled">Enabled ART inline hook compatibility for %1$s.</string>
     <string name="action_invalidate_art_inline_hooks_disabled">Disabled ART inline hook compatibility for %1$s.</string>
     <string name="action_invalidate_art_inline_hooks_failed">Could not change ART inline hook compatibility for %1$s.</string>
+    <string name="daemon_down_title">Aevix daemon is not running</string>
+    <string name="daemon_down_summary">Nothing on this page could be asked of Aevix, so the rows that report on the framework do not know the answer. Check that the Aevix module is installed and enabled in your root manager. If the root implementation loads its kernel module after boot, that boot may have skipped post-fs-data, so Aevix\'s policy was never applied and nothing was started; soft reboot once after loading the module (or use the root manager\'s post-fs-data replay), then open this page again.</string>
+    <string name="info_daemon_not_running">— (daemon not running)</string>
 </resources>
