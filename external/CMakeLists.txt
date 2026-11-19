@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.10)
 
 project(external)
 
+# NDK/CMake can re-enable host-side C++ module scanning in nested projects; this tree imports no C++ modules.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 set(CMAKE_CXX_STANDARD 23)
 
 set(XZ_SOURCES
