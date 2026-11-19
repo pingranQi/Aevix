@@ -876,6 +876,9 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     // Lock to ensure a consistent snapshot of the callback lists.
     lsplant::JNIMonitor monitor(env, backup);
 
+    // No callbacks remain; avoid allocating empty snapshot arrays for a retired hook.
+    if (hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()) return nullptr;
+
     // Get the generic Object class
     jclass obj_class = env->FindClass("java/lang/Object");
 

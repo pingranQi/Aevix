@@ -25,6 +25,9 @@ assert "value = ret_val.l;" in source
 assert "WrapperFor(env, returns)" in source
 assert "env->CallStaticObjectMethodA(wrapper->clazz, wrapper->box, &ret_val)" in source
 
+# Retired hooks with no callbacks should not allocate empty JNI snapshot arrays.
+assert "hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()" in source
+
 # JNI exceptions raised while reading or converting an argument abort before invoking the target.
 assert "if (env->ExceptionCheck())" in source
 assert "StoreWidened(env, *wrapper, declared, element, a[i]);" in source
