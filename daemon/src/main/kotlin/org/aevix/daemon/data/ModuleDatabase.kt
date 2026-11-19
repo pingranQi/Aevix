@@ -226,8 +226,10 @@ object ModuleDatabase {
     // First, check if it exists. If not, we need to "discover" it.
     val exists =
         db.compileStatement("SELECT COUNT(*) FROM modules WHERE module_pkg_name = ?")
-            .apply { bindString(1, packageName) }
-            .simpleQueryForLong() > 0
+            .use { statement ->
+              statement.bindString(1, packageName)
+              statement.simpleQueryForLong() > 0
+            }
     if (!exists) {
       val values =
           ContentValues().apply {
@@ -298,8 +300,10 @@ object ModuleDatabase {
     try {
       val mid =
           db.compileStatement("SELECT mid FROM modules WHERE module_pkg_name = ?")
-              .apply { bindString(1, packageName) }
-              .simpleQueryForLong()
+              .use { statement ->
+                statement.bindString(1, packageName)
+                statement.simpleQueryForLong()
+              }
       db.delete("scope", "mid = ?", arrayOf(mid.toString()))
 
       val values = ContentValues().apply { put("mid", mid) }
@@ -346,8 +350,10 @@ object ModuleDatabase {
     return runCatching {
           val mid =
               db.compileStatement("SELECT mid FROM modules WHERE module_pkg_name = ?")
-                  .apply { bindString(1, packageName) }
-                  .simpleQueryForLong()
+                  .use { statement ->
+                    statement.bindString(1, packageName)
+                    statement.simpleQueryForLong()
+                  }
           val placeholders = claimed.joinToString(",") { "?" }
           if (claimed.isEmpty()) {
             db.delete("scope", "mid = ?", arrayOf(mid.toString()))
@@ -373,8 +379,10 @@ object ModuleDatabase {
     val db = dbHelper.writableDatabase
     val mid =
         db.compileStatement("SELECT mid FROM modules WHERE module_pkg_name = ?")
-            .apply { bindString(1, packageName) }
-            .simpleQueryForLong()
+            .use { statement ->
+              statement.bindString(1, packageName)
+              statement.simpleQueryForLong()
+            }
     db.delete(
         "scope",
         "mid = ? AND app_pkg_name = ? AND user_id = ?",
