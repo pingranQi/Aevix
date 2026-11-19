@@ -62,7 +62,16 @@ public final class XposedBridge {
 
     public static volatile ClassLoader dummyClassLoader = null;
 
-    public static void initXResources() {
+    /**
+     * Prepares the resource hooks, once per process.
+     *
+     * Synchronized: the guard is a plain field read followed by a check, and everything between
+     * them — building the dummy class loader, then replacing this class's own parent with it — is
+     * not idempotent. Two threads arriving together would each build a loader and each write the
+     * parent field, and whichever wrote last would be the parent every class resolved afterwards;
+     * the other's loader, and every class already defined through it, would be orphaned.
+     */
+    public static synchronized void initXResources() {
         if (dummyClassLoader != null) {
             return;
         }
@@ -82,7 +91,15 @@ public final class XposedBridge {
                     // ActivityThread for now and the call will throw an NPE. Luckily they check the
                     // nullability of the result configuration. So we hereby set a dummy
                     // ActivityThread to bypass such a situation.
+                    //
+                    // The previous value is put back rather than null: this also runs when the
+                    // framework is injected into a system server that is already up, where
+                    // sCurrentActivityThread holds the real one. Clearing it there is not a
+                    // bypass, it is removing the handle every framework component resolves
+                    // through - and the first one to need it throws where nothing catches it.
                     var fake = XposedHelpers.newInstance(ActivityThread.class);
+                    var previous =
+                            XposedHelpers.getStaticObjectField(ActivityThread.class, "sCurrentActivityThread");
                     XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", fake);
                     try {
                         TypedArray ta = res.obtainTypedArray(res.getIdentifier(
@@ -90,7 +107,7 @@ public final class XposedBridge {
                         taClass = ta.getClass();
                         ta.recycle();
                     } finally {
-                        XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", null);
+                        XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", previous);
                     }
                 }
             } catch (Resources.NotFoundException nfe) {

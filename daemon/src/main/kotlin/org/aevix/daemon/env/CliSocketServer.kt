@@ -41,6 +41,14 @@ object CliSocketServer {
         val address = LocalSocketAddress(cliSocketPath, LocalSocketAddress.Namespace.FILESYSTEM)
         rootSocket.bind(address)
 
+        // Owner only, explicitly. `bind` creates the node with the process umask applied, and the
+        // daemon runs as root where that is often 0 - a socket any app could connect to and drive
+        // the CLI's commands through. The token in the handshake is a compile-time UUID, which is
+        // not a secret: it sits in the daemon's BuildConfig and in the CLI binary, both readable.
+        // The file mode is the boundary that actually holds.
+        runCatching { Os.chmod(cliSocketPath, "600".toInt(8)) }
+            .onFailure { Log.w(TAG, "Could not restrict the CLI socket to its owner", it) }
+
         // LocalServerSocket(FileDescriptor) requires the FD to already be listening.
         Os.listen(rootSocket.fileDescriptor, 50)
         // Wrap the underlying FileDescriptor into a ServerSocket
@@ -103,15 +111,14 @@ object CliSocketServer {
           val response = CliResponse(success = true, isFdAttached = true)
           output.writeUTF(AevixIPC.gson.toJson(response))
 
-          // Open file and get raw FileDescriptor
-          val fis = FileInputStream(logFile)
-          val fd = fis.fd
-
-          // Attach FD to the next write operation
-          socket.setFileDescriptorsForSend(arrayOf(fd))
-          output.write(1) // Trigger byte to "carry" the ancillary FD data
-
-          // fis is closed when the socket/method finishes
+          // The descriptor is duplicated into the socket by the kernel when the ancillary data is
+          // written, so this side can drop its own reference as soon as `write` returns. It used
+          // to be left to the finalizer, and `socket.close()` does not close it - that is an
+          // unrelated descriptor - so every streamed log leaked one.
+          FileInputStream(logFile).use { fis ->
+            socket.setFileDescriptorsForSend(arrayOf(fis.fd))
+            output.write(1) // Trigger byte to "carry" the ancillary FD data
+          }
           return
         } else {
           output.writeUTF(
