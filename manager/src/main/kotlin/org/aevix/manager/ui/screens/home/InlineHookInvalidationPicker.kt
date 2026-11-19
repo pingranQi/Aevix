@@ -43,11 +43,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.aevix.manager.R
 import org.aevix.ui.AppIcon
 import org.aevix.ui.SearchField
-import org.aevix.ui.theme.Mono
 
 /** The global selector entry placed immediately above the status-notification switch. */
 @Composable
@@ -204,7 +204,7 @@ fun InlineHookInvalidationPicker(
                                         )
                                         .alpha(if (saving) 0.6f else 1f),
                                 supportingContent = {
-                                    Text(app.packageName, style = Mono)
+                                    Text(app.packageName, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
                                 },
                                 leadingContent = {
                                     val info = app.applicationInfo
