@@ -75,7 +75,7 @@ object Main {
                         if (cl != null) {
                             runCatching {
                                     org.aevix.impl.hookers.HandleSystemServerProcessHooker
-                                        .initSystemServer(cl, isLate = false)
+                                        .initSystemServer(cl, isLate = isLateInject)
                                 }
                                 .onFailure { Utils.logE("Fallback system server init failed", it) }
                             break
