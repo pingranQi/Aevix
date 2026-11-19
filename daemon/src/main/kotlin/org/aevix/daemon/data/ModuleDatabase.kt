@@ -226,8 +226,10 @@ object ModuleDatabase {
     // First, check if it exists. If not, we need to "discover" it.
     val exists =
         db.compileStatement("SELECT COUNT(*) FROM modules WHERE module_pkg_name = ?")
-            .apply { bindString(1, packageName) }
-            .simpleQueryForLong() > 0
+            .use { statement ->
+              statement.bindString(1, packageName)
+              statement.simpleQueryForLong() > 0
+            }
     if (!exists) {
       val values =
           ContentValues().apply {
