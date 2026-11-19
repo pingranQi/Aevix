@@ -2,16 +2,6 @@ cmake_minimum_required(VERSION 3.10)
 
 project(native)
 
-# CMake 3.28 and later scan for C++ modules by default from C++20 on, and for the standard library
-# it runs clang-scan-deps against the *host's* libstdc++ sources -- /usr/include/c++/15/bits/std.cc
-# on the CI image. The sysroot is the NDK's, which has no such file, so the scan fails with
-# "fatal error: 'bits/stdc++.h' file not found" and takes the whole build down.
-#
-# Nothing here imports a module, so the scan has nothing to find. It only ever passed before
-# because ccache still held the result from a configuration where VERSION_CODE had not changed;
-# a clean build fails every time.
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
-
 set(CMAKE_CXX_STANDARD 23)
 
 add_subdirectory(${AEVIX_ROOT}/external external)
@@ -35,8 +25,8 @@ set(IGNORED_WARNINGS
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 # Add the 'src' directory and external XZ library includes as PRIVATE.
-# These are only needed to build aevix_native itself.
-target_include_directories(${PROJECT_NAME} PRIVATE src ${AEVIX_ROOT}/external/xz-embedded/linux/include)
+# These are only needed to build vector_native itself.
+target_include_directories(${PROJECT_NAME} PRIVATE src ${VECTOR_ROOT}/external/xz-embedded/linux/include)
 
 # --- Compiler Options ---
 # Apply the standard pedantic warnings and the ignored warnings list.
@@ -46,13 +36,18 @@ target_compile_options(${PROJECT_NAME} PRIVATE -Wpedantic ${IGNORED_WARNINGS})
 # Link against required external and system libraries.
 # PUBLIC libraries are propagated to targets that link against this one.
 # PRIVATE libraries are only used for the compilation of this target.
-target_link_libraries(${PROJECT_NAME} PUBLIC
+set(VECTOR_NATIVE_LINK_LIBS
     dobby_static
     lsplant_static
     xz_static
     log # Android logging library
     fmt-header-only
 )
+if (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(VECTOR_NATIVE_LINK_LIBS ${VECTOR_NATIVE_LINK_LIBS} shadowhook)
+endif ()
+
+target_link_libraries(${PROJECT_NAME} PUBLIC ${VECTOR_NATIVE_LINK_LIBS})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     dex_builder_static
