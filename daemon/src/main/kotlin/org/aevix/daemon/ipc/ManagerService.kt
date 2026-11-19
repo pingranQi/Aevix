@@ -616,6 +616,12 @@ object ManagerService : IManagerService.Stub() {
 
   override fun getRootImplementation() = RootImplementation.implementation
 
+  override fun getInvalidateArtInlineHookPackages(): MutableList<String> =
+      PreferenceStore.getInvalidateArtInlineHookPackages().sorted().toMutableList()
+
+  override fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Boolean =
+      PreferenceStore.setInvalidateArtInlineHooks(packageName, enabled)
+
 
   override fun installFrameworkZip(zipPath: String, receiver: IFrameworkInstallReceiver) {
     // Off the binder thread: a flash takes seconds to minutes, and holding a binder thread for its

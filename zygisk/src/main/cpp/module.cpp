@@ -1,5 +1,6 @@
 #include <common/config.h>
 #include <common/logging.h>
+#include <core/art_inline_hook_invalidation.h>
 #include <core/context.h>
 #include <core/native_api.h>
 #include <elf/elf_image.h>
@@ -106,26 +107,34 @@ private:
     zygisk::Api *api_ = nullptr;
     JNIEnv *env_ = nullptr;
 
-    // --- ART Hooker Configuration ---
-    const lsplant::InitInfo init_info_{
-        .inline_hooker =
-            [](auto target, auto replace) {
-                void *backup = nullptr;
-                return HookInline(target, replace, &backup) == 0 ? backup : nullptr;
-            },
-        .inline_unhooker = [](auto target) { return UnhookInline(target) == 0; },
-        .art_symbol_resolver =
-            [](auto symbol) { return ElfSymbolCache::GetArt()->getSymbAddress(symbol); },
-        .art_symbol_prefix_resolver =
-            [](auto symbol) { return ElfSymbolCache::GetArt()->getSymbPrefixFirstAddress(symbol); },
-        .generated_class_name = "Aevix_",
-        .generated_source_name = "Dobby",
-    };
+    lsplant::InitInfo MakeArtHookInitInfo();
 
     // State managed within the class instance for each forked process.
     bool should_inject_ = false;
     bool is_manager_app_ = false;
 };
+
+
+
+lsplant::InitInfo AevixModule::MakeArtHookInitInfo() {
+    return lsplant::InitInfo{
+        .inline_hooker = [](auto target, auto replace) -> void * {
+            void *backup = nullptr;
+            if (HookInline(target, replace, &backup) != 0) return nullptr;
+            RecordArtInlineHookInvalidationTarget(target);
+            return backup;
+        },
+        .inline_unhooker = [](auto target) {
+            if (UnhookInline(target) != 0) return false;
+            ForgetArtInlineHookInvalidationTarget(target);
+            return true;
+        },
+        .art_symbol_resolver = [](auto symbol) { return ElfSymbolCache::GetArt()->getSymbAddress(symbol); },
+        .art_symbol_prefix_resolver = [](auto symbol) { return ElfSymbolCache::GetArt()->getSymbPrefixFirstAddress(symbol); },
+        .generated_class_name = "Aevix_",
+        .generated_source_name = "Dobby",
+    };
+}
 
 // =========================================================================================
 // Implementation of AevixModule
@@ -341,6 +350,17 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     if (obfs_map.empty()) obfs_map = ipc_bridge.FetchObfuscationMap(env_, binder.get());
     ConfigBridge::GetInstance()->obfuscation_map(std::move(obfs_map));
 
+    const bool invalidate_art_inline_hooks_requested =
+        !is_manager_app_ && ipc_bridge.ShouldInvalidateArtInlineHooks(env_, binder.get());
+    const bool invalidate_art_inline_hooks =
+        ConfigureArtInlineHookInvalidation(invalidate_art_inline_hooks_requested);
+    if (invalidate_art_inline_hooks) {
+        LOGI("ART inline-hook compatibility enabled for '{}'.", nice_name_str.get());
+    } else if (invalidate_art_inline_hooks_requested) {
+        LOGW("ART inline-hook compatibility could not be armed for '{}'.", nice_name_str.get());
+    }
+
+
     {
         PreloadedDex dex(dex_fd, dex_size);
         this->LoadDex(env_, std::move(dex));
@@ -348,7 +368,8 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     close(dex_fd);  // The FD is duplicated by mmap, we can close it now.
 
     // Initialize ART hooks via the native library.
-    this->InitArtHooker(env_, init_info_);
+    auto art_hook_init_info = MakeArtHookInitInfo();
+    this->InitArtHooker(env_, art_hook_init_info);
     // Initialize JNI hooks via the native library.
     this->InitHooks(env_);
     // Find the Java entrypoint.
@@ -358,6 +379,12 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     bool entered = this->FindAndCall(
         env_, "forkCommon", "(ZZLjava/lang/String;Ljava/lang/String;Landroid/os/IBinder;)V",
         JNI_FALSE, JNI_FALSE, args->nice_name, args->app_data_dir, binder.get(), is_manager_app_);
+
+    // Restore libart executable bytes after framework bootstrap, before app class-loader creation.
+    // LSPlant/Dobby metadata remains intact, but ART maintenance hooks stop running afterwards.
+    if (invalidate_art_inline_hooks && !InvalidateArtInlineHooksIfEnabled()) {
+        LOGW("ART inline-hook compatibility invalidation failed in '{}'.", nice_name_str.get());
+    }
 
     if (entered) {
         LOGV("Injected Aevix framework into '{}'.", nice_name_str.get());
@@ -450,7 +477,9 @@ void AevixModule::postServerSpecialize(const zygisk::ServerSpecializeArgs *args)
 
     ipc_bridge.HookBridge(env_);
 
-    this->InitArtHooker(env_, init_info_);
+    (void)ConfigureArtInlineHookInvalidation(false); // system_server retains ART maintenance hooks.
+    auto art_hook_init_info = MakeArtHookInitInfo();
+    this->InitArtHooker(env_, art_hook_init_info);
     this->InitHooks(env_);
     this->SetupEntryClass(env_);
 

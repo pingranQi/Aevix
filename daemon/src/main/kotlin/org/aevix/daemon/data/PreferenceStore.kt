@@ -6,6 +6,9 @@ import org.aevix.daemon.BuildConfig
 import org.apache.commons.lang3.SerializationUtilsX
 
 private const val TAG = "AevixPreferenceStore"
+private const val ART_INLINE_HOOK_PACKAGES_KEY = "invalidate_art_inline_hook_packages"
+private const val SYSTEM_UI_VIRTUAL_PACKAGE = "system"
+private const val SYSTEM_UI_PROCESS = "system:ui"
 
 object PreferenceStore {
 
@@ -116,4 +119,28 @@ object PreferenceStore {
   fun isScopeRequestBlocked(pkg: String): Boolean =
       (getModulePrefs("lspd", 0, "config")["scope_request_blocked"] as? Set<*>)?.contains(pkg) ==
           true
+
+  fun getInvalidateArtInlineHookPackages(): Set<String> =
+      (getModulePrefs("lspd", 0, "config")[ART_INLINE_HOOK_PACKAGES_KEY] as? Set<*>)
+          ?.filterIsInstance<String>()?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+  fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Boolean {
+    val normalized = packageName.trim()
+    if (normalized.isEmpty()) return false
+    val packages = getInvalidateArtInlineHookPackages().toMutableSet()
+    if (enabled) packages.add(normalized) else packages.remove(normalized)
+    updateModulePref("lspd", 0, "config", ART_INLINE_HOOK_PACKAGES_KEY, packages)
+    return true
+  }
+
+  /** Matches package processes and the synthetic system:ui process; custom component names are not inferred. */
+  fun shouldInvalidateArtInlineHookProcess(processName: String, uid: Int): Boolean {
+    val configured = getInvalidateArtInlineHookPackages()
+    if (configured.isEmpty()) return false
+    if (SYSTEM_UI_VIRTUAL_PACKAGE in configured && uid == android.os.Process.SYSTEM_UID &&
+        processName == SYSTEM_UI_PROCESS) return true
+    return configured.any { pkg ->
+      pkg != SYSTEM_UI_VIRTUAL_PACKAGE && (processName == pkg || processName.startsWith("$pkg:"))
+    }
+  }
 }

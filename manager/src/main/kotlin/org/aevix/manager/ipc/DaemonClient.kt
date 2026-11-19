@@ -232,6 +232,13 @@ class DaemonClient(private val serviceState: StateFlow<IManagerService?>) {
         it.setApiProtectionEnabled(enabled)
     }
 
+    suspend fun getInvalidateArtInlineHookPackages(): Result<List<String>> = runIpc {
+        it.invalidateArtInlineHookPackages.orEmpty()
+    }
+
+    suspend fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Result<Boolean> =
+        runIpc { it.setInvalidateArtInlineHooks(packageName, enabled) }
+
     /**
      * The rotated parts the daemon still holds for one of the two logs, oldest first.
      *

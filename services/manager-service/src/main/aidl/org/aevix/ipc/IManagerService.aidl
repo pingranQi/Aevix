@@ -73,7 +73,7 @@ interface IManagerService {
      * transaction ids follow declaration order, this number is the only thing standing between a
      * mismatched pair and a call that lands on the wrong method.</p>
      */
-    const int PROTOCOL_VERSION = 3;
+    const int PROTOCOL_VERSION = 4;
 
     /**
      * Which generation of this interface the daemon implements, never below 1.
@@ -812,4 +812,10 @@ interface IManagerService {
 
     /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
     void setApiProtectionEnabled(boolean enabled);
+
+    /** Selected packages whose ART inline hooks are invalidated after framework bootstrap. */
+    List<String> getInvalidateArtInlineHookPackages();
+
+    /** Stores whether one package uses ART inline-hook compatibility mode. */
+    boolean setInvalidateArtInlineHooks(String packageName, boolean enabled);
 }
