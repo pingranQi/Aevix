@@ -38,7 +38,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -97,6 +99,8 @@ fun SystemStatusScreen(
     val context = LocalContext.current
     val statusNotification by viewModel.statusNotification.collectAsStateWithLifecycle()
     val hiddenIcon by viewModel.hiddenIcon.collectAsStateWithLifecycle()
+    val inlineHookInvalidation by viewModel.inlineHookInvalidation.collectAsStateWithLifecycle()
+    var inlineHookPickerOpen by rememberSaveable { mutableStateOf(false) }
     val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
     val presence by viewModel.presence.collectAsStateWithLifecycle()
     val managerInstall by viewModel.managerInstall.collectAsStateWithLifecycle()
@@ -134,6 +138,17 @@ fun SystemStatusScreen(
     val copied = stringResource(UiR.string.copied)
     val shortcutRefused = stringResource(R.string.launcher_shortcut_refused)
     val installDone = stringResource(R.string.launcher_install_done)
+
+    LaunchedEffect(inlineHookInvalidation.saveErrorPackage) {
+        val packageName = inlineHookInvalidation.saveErrorPackage ?: return@LaunchedEffect
+        val option = inlineHookInvalidation.apps.firstOrNull { it.packageName == packageName }
+        val label = option?.appName?.takeIf { it.isNotBlank() } ?: packageName
+        snackbars.show(
+            context.getString(R.string.action_invalidate_art_inline_hooks_failed, label),
+            SnackbarTone.Failure,
+        )
+        viewModel.clearInlineHookSaveError()
+    }
 
     Scaffold(
         snackbarHost = { SharedSnackbarHost(snackbars) },
@@ -212,6 +227,16 @@ fun SystemStatusScreen(
                 Spacer(Modifier.height(4.dp))
             }
             item {
+                InlineHookInvalidationRow(
+                    state = inlineHookInvalidation,
+                    enabled = daemonAlive,
+                    onClick = {
+                        inlineHookPickerOpen = true
+                        viewModel.refreshInlineHookInvalidation()
+                    },
+                )
+            }
+            item {
                 FrameworkToggle(
                     title = stringResource(R.string.status_notification),
                     subtitle = stringResource(R.string.status_notification_summary),
@@ -262,6 +287,15 @@ fun SystemStatusScreen(
                 }
             }
         }
+    }
+
+    if (inlineHookPickerOpen) {
+        InlineHookInvalidationPicker(
+            state = inlineHookInvalidation,
+            onDismiss = { inlineHookPickerOpen = false },
+            onRetry = viewModel::refreshInlineHookInvalidation,
+            onToggle = viewModel::setInvalidateArtInlineHooks,
+        )
     }
 
     // Success only. A failure stays on the card, where it can still be read by someone who was not
