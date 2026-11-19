@@ -159,9 +159,32 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
     private val isStatic = Modifier.isStatic(method.modifiers)
     private val returnType = if (method is Method) method.returnType else null
 
-    /** Invoked by C++ via JNI. */
+    /**
+     * Invoked by C++ via JNI. A failure in a framework hook must not escape into system_server;
+     * fall back to the original method, while preserving an exception thrown by that original.
+     */
     fun callback(args: Array<Any?>): Any? {
-        val thisObject = if (isStatic) null else args[0]
+        return try {
+            dispatch(args)
+        } catch (t: Throwable) {
+            Utils.logE("Hook chain for " + method + " failed; running the original", t)
+            try {
+                if (isStatic) {
+                    invokeOriginalSafely(null, args)
+                } else {
+                    invokeOriginalSafely(
+                        args.firstOrNull(),
+                        if (args.size <= 1) EMPTY_HOOK_ARGUMENTS else args.copyOfRange(1, args.size),
+                    )
+                }
+            } catch (fallback: Throwable) {
+                throw fallback
+            }
+        }
+    }
+
+    private fun dispatch(args: Array<Any?>): Any? {
+        val thisObject = if (isStatic) null else args.firstOrNull()
         val actualArgs =
             when {
                 isStatic -> args
@@ -200,28 +223,32 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
 
         val result = rootChain.proceed()
 
-        // Type safety validation before returning to C++
-        if (returnType != null && returnType != Void.TYPE) {
-            if (result == null) {
-                if (returnType.isPrimitive) {
-                    throw NullPointerException(
-                        "Hook returned null for a primitive return type: $method"
-                    )
-                }
-            } else {
-                // Use the JNI bridge for the most reliable type check across ClassLoaders
-                if (
-                    !HookBridge.instanceOf(result, returnType) &&
-                        !isBoxingCompatible(result, returnType)
-                ) {
-                    Utils.logD(
-                        "Hook return type mismatch. Expected ${returnType.name}, got ${result.javaClass.name}"
-                    )
-                }
-            }
-        }
+        return coerceReturn(result)
+    }
 
-        return result
+    /** Ensures the native trampoline receives a value compatible with the hooked return type. */
+    private fun coerceReturn(result: Any?): Any? {
+        val type = returnType ?: return result
+        if (type == Void.TYPE || !type.isPrimitive && result == null) return result
+        if (result == null) return defaultValueOf(type)
+        if (HookBridge.instanceOf(result, type) || isBoxingCompatible(result, type)) return result
+
+        Utils.logD("Hook return type mismatch. Expected " + type.name + ", got " + result.javaClass.name)
+        return if (type.isPrimitive) defaultValueOf(type) else null
+    }
+
+    private fun defaultValueOf(type: Class<*>): Any =
+        when (type) {
+            Int::class.javaPrimitiveType -> 0
+            Long::class.javaPrimitiveType -> 0L
+            Boolean::class.javaPrimitiveType -> false
+            Double::class.javaPrimitiveType -> 0.0
+            Float::class.javaPrimitiveType -> 0f
+            Byte::class.javaPrimitiveType -> 0.toByte()
+            Char::class.javaPrimitiveType -> '\u0000'
+            Short::class.javaPrimitiveType -> 0.toShort()
+            else -> 0
+        }
     }
 
     /** Handles primitive boxing compatibility (e.g., Integer object vs int primitive). */
