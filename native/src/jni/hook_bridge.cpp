@@ -354,6 +354,9 @@ AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, hookMethod, jboolean useModernApi,
     // ensuring thread-safe modification of the callback lists.
     lsplant::JNIMonitor monitor(env, backup);
 
+    // Empty hooks dispatch the original directly; avoid allocating empty snapshot arrays.
+    if (hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()) return nullptr;
+
     // Store a global reference to the callback object itself.
     if (useModernApi) {
         hook_item->modern_callbacks.emplace(priority, env->NewGlobalRef(callback));
