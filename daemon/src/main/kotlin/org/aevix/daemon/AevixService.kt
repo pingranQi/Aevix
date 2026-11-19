@@ -10,6 +10,8 @@ import android.os.Binder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Process
+import android.os.SystemProperties
 import android.telephony.TelephonyManager
 import android.util.Log
 import hidden.HiddenApiBridge
@@ -18,6 +20,7 @@ import kotlinx.coroutines.launch
 import org.aevix.ipc.ScopeEntry
 import org.aevix.ipc.IAevixDaemon
 import org.aevix.ipc.IFrameworkService
+import org.aevix.ipc.IModuleService
 import org.aevix.daemon.data.ConfigCache
 import org.aevix.daemon.data.ModuleDatabase
 import org.aevix.daemon.data.PreferenceStore
@@ -25,6 +28,7 @@ import org.aevix.daemon.data.ProcessScope
 import org.aevix.daemon.ipc.FrameworkService
 import org.aevix.daemon.ipc.ManagerService
 import org.aevix.daemon.ipc.ModuleAppService
+import org.aevix.daemon.ipc.SystemServerService
 import org.aevix.daemon.system.*
 
 private const val TAG = "AevixService"
@@ -32,6 +36,7 @@ private const val TAG = "AevixService"
 object AevixService : IAevixDaemon.Stub() {
 
   private var bootCompleted = false
+  private var contextOwner: IBinder? = null
 
   /**
    * What the dialer broadcasts when a secret code is entered, which changed name in Q.
@@ -49,18 +54,20 @@ object AevixService : IAevixDaemon.Stub() {
   /** Dial *#*#23849#*#* ("AEVIX" on the keypad) to open the manager. */
   private const val SECRET_CODE = "23849"
 
+  @Synchronized
   override fun dispatchSystemServerContext(
       appThread: IBinder?,
       activityToken: IBinder?,
   ) {
-    appThread?.let { SystemContext.appThread = IApplicationThread.Stub.asInterface(it) }
+    if (Binder.getCallingUid() != Process.SYSTEM_UID || appThread == null) return
+    if (contextOwner == appThread) return
+    SystemContext.appThread = IApplicationThread.Stub.asInterface(appThread)
     SystemContext.token = activityToken
-
-    // Initialize OS Observers using Coroutines for the dispatch blocks
     registerReceivers()
+    contextOwner = appThread
 
-    if (AevixDaemon.startedAfterSystemServer) {
-      Log.i(TAG, "Started after system_server. Forcing boot completed event.")
+    if (AevixDaemon.startedAfterSystemServer || SystemProperties.get("sys.boot_completed") == "1") {
+      Log.i(TAG, "Connected to an already booted system_server.")
       dispatchBootCompleted()
     }
   }
@@ -74,6 +81,9 @@ object AevixService : IAevixDaemon.Stub() {
     if (Binder.getCallingUid() != 1000) {
       Log.w(TAG, "Unauthorized attachProcess call")
       return null
+    }
+    if (processName == "system") {
+      return SystemServerService.attachProcess(uid, pid, processName, heartBeat)
     }
     if (FrameworkService.hasRegister(uid, pid)) return null
 
@@ -90,6 +100,14 @@ object AevixService : IAevixDaemon.Stub() {
   }
 
   override fun preStartManager() = ManagerService.preStartManager()
+
+  override fun reconnectSystemModule(
+      packageName: String,
+      loadedVersionCode: Long,
+      hotReloadable: Boolean,
+  ): IModuleService? =
+      FrameworkService.reconnectSystemModule(packageName, loadedVersionCode, hotReloadable)
+
 
   private fun createReceiver() =
       object : IIntentReceiver.Stub() {
