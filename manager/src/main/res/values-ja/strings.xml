@@ -413,4 +413,12 @@
     <string name="action_install_other_user_prompt_app">このアプリをインストールするユーザーを選択してください。</string>
     <string name="action_installed_other_user">%1$s にインストールしました。</string>
     <string name="action_install_other_user_failed">%1$s にインストールできませんでした。</string>
+    <string name="action_invalidate_art_inline_hooks">ART インラインフック互換モード</string>
+    <string name="action_invalidate_art_inline_hooks_summary">選択した各アプリで、モジュールやフックの数にかかわらず、Aevix の ART インラインフックを全体的に無効化します。一部のモジュールが動作しなくなったり、アプリが誤動作またはクラッシュしたりする可能性があります。各アプリの次回起動時に適用されます。</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">%1$s の ART インラインフック互換モードを有効にしました。</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">%1$s の ART インラインフック互換モードを無効にしました。</string>
+    <string name="action_invalidate_art_inline_hooks_failed">%1$s の ART インラインフック互換モードを変更できませんでした。</string>
+    <string name="daemon_down_title">Aevix デーモンが実行されていません</string>
+    <string name="daemon_down_summary">このページから Aevix に問い合わせることができないため、フレームワークの状態を示す項目は現在の状態を確認できません。root マネージャーで Aevix モジュールがインストールされ、有効になっていることを確認してください。root 実装が起動後にカーネルモジュールを読み込む場合、その起動時に post-fs-data が実行されず、Aevix のポリシーが適用されずデーモンも起動していない可能性があります。モジュールを読み込んだ後にソフトリブートするか、root マネージャーの post-fs-data 再実行機能を使用してから、このページを再度開いてください。</string>
+    <string name="info_daemon_not_running">—（デーモン未実行）</string>
 </resources>
