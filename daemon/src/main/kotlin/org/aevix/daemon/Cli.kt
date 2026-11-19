@@ -158,6 +158,11 @@ object OutputFormatter {
   }
 
   private fun printTable(rows: List<Map<String, Any>>) {
+    if (rows.isEmpty()) {
+      println("(no rows)")
+      return
+    }
+
     val headers = rows.first().keys.toList()
     val columnWidths = headers.associateWith { it.length }.toMutableMap()
 
