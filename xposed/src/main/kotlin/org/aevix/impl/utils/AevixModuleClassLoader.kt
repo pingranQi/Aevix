@@ -72,7 +72,8 @@ class AevixModuleClassLoader : ByteBufferDexClassLoader {
             )
         }
 
-        findLoadedClass(name)?.let {
+        synchronized(this) {
+            findLoadedClass(name)?.let {
             return it
         }
 
@@ -91,6 +92,7 @@ class AevixModuleClassLoader : ByteBufferDexClassLoader {
             return parent?.loadClass(name) ?: throw fromSuper
         } catch (cnfe: ClassNotFoundException) {
             throw fromSuper
+        }
         }
     }
 
