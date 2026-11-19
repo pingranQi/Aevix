@@ -429,4 +429,7 @@
     <string name="action_invalidate_art_inline_hooks_enabled">已為 %1$s 啟用 ART 內聯 Hook 相容模式。</string>
     <string name="action_invalidate_art_inline_hooks_disabled">已為 %1$s 停用 ART 內聯 Hook 相容模式。</string>
     <string name="action_invalidate_art_inline_hooks_failed">無法變更 %1$s 的 ART 內聯 Hook 相容模式。</string>
+    <string name="daemon_down_title">Aevix 背景服務未執行</string>
+    <string name="daemon_down_summary">此頁面無法從 Aevix 背景服務取得狀態，因此下方的框架健康檢查尚無結果。請確認 Aevix 模組已安裝並在 Root 管理器中啟用。如果 Root 實作是在開機後才載入核心模組，本次啟動可能略過 post-fs-data，導致 Aevix 政策未套用、背景服務未啟動。載入模組後執行一次軟重啟，或使用 Root 管理器重新執行 post-fs-data，然後重新開啟此頁面。</string>
+    <string name="info_daemon_not_running">—（背景服務未執行）</string>
 </resources>
