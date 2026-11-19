@@ -198,7 +198,7 @@ fun InlineHookInvalidationPicker(
                                 modifier =
                                     Modifier.toggleable(
                                             value = checked,
-                                            enabled = !saving,
+                                            enabled = !saving && !state.loading,
                                             role = Role.Checkbox,
                                             onValueChange = { onToggle(app.packageName, it) },
                                         )
