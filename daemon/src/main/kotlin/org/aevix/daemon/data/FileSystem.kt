@@ -392,12 +392,12 @@ object FileSystem {
               }
               "UNSUPPORTED" -> {
                 Log.w(TAG, "Module $apkPath uses API 100 which is no longer supported.")
-                return ModuleLoad.UnsupportedApi
+                return fail(ModuleLoad.UnsupportedApi)
               }
-              else -> return ModuleLoad.Unusable // No valid init files found
+              else -> return fail(ModuleLoad.Unusable) // No valid init files found
             }
 
-            if (moduleClassNames.isEmpty()) return ModuleLoad.Unusable
+            if (moduleClassNames.isEmpty()) return fail(ModuleLoad.Unusable)
 
             // Read DEX files
             var secondary = 1
