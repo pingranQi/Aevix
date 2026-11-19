@@ -620,11 +620,13 @@ object FileSystem {
     runCatching {
           val libRoot = root.resolve("lib")
           if (!libRoot.isDirectory()) return
+          // Collect entries while the directory stream is open; delete only after iteration
+          // finishes, so traversal is not invalidated by mutating the directory being walked.
+          val stale = mutableListOf<Path>()
           Files.list(libRoot).use { stream ->
-            stream
-                .filter { it.fileName.toString() !in keep }
-                .forEach { it.toFile().deleteRecursively() }
+            stream.filter { it.fileName.toString() !in keep }.forEach { stale.add(it) }
           }
+          stale.forEach { it.toFile().deleteRecursively() }
         }
         .onFailure { Log.e(TAG, "Failed to prune staged native libraries", it) }
   }
