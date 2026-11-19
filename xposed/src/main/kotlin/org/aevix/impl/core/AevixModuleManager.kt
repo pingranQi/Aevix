@@ -12,6 +12,8 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.service.IXposedService
 import java.io.File
 import java.lang.ref.WeakReference
+import java.lang.reflect.Constructor
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.ConcurrentHashMap
 import org.aevix.ipc.HotReloadOutcome
 import org.aevix.ipc.LoadedModule
@@ -29,6 +31,7 @@ import org.aevix.nativebridge.NativeAPI
 object AevixModuleManager {
 
     private const val TAG = "AevixModuleManager"
+    private const val NOT_ATTACHED = "Framework not attached"
 
     // Entries are weak on purpose: activeModules owns the only strong reference, and detach()
     // removes it. A reload holds a local strong list for the cycle instead.
@@ -88,25 +91,57 @@ object AevixModuleManager {
         return true
     }
 
-    // Publishes nothing, so a reload can fail before the old generation is touched.
     private fun buildGeneration(
         module: LoadedModule,
         isSystemServer: Boolean,
         processName: String,
-    ): Pair<Generation, List<XposedModule>>? {
-        try {
-            Log.d(TAG, "Loading package ${module.packageName}")
+    ): Pair<Generation, List<XposedModule>>? =
+        stageGeneration(module, isSystemServer, processName)?.instantiate()
 
-            // Construct the native library search path
+    /** Resolves classes without executing module constructors. */
+    private class StagedGeneration(
+        private val module: LoadedModule,
+        private val isSystemServer: Boolean,
+        private val processName: String,
+        private val classLoader: ClassLoader,
+        private val context: AevixContext,
+        private val entryConstructors: List<Constructor<*>>,
+    ) {
+        fun instantiate(): Pair<Generation, List<XposedModule>>? {
+            module.code.moduleLibraryNames.forEach { NativeAPI.recordNativeEntrypoint(it) }
+            val entries = mutableListOf<XposedModule>()
+            val failures = mutableListOf<String>()
+            for (constructor in entryConstructors) {
+                val className = constructor.declaringClass.name
+                try {
+                    constructor.isAccessible = true
+                    val instance = constructor.newInstance() as XposedModule
+                    instance.attachFramework(context) { AevixLifecycleManager.detach(instance) }
+                    entries.add(instance)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to instantiate class $className", t)
+                    failures += describeInstantiationFailure(className, t)
+                }
+            }
+            if (entries.isEmpty()) {
+                Log.e(TAG, "No entry class of ${module.packageName} could be instantiated: " +
+                    failures.joinToString("; "))
+                return null
+            }
+            return Generation(classLoader, context, entries, isSystemServer, processName) to entries
+        }
+    }
+
+    private fun stageGeneration(
+        module: LoadedModule,
+        isSystemServer: Boolean,
+        processName: String,
+    ): StagedGeneration? {
+        try {
+            Log.d(TAG, "Staging package ${module.packageName}")
             val librarySearchPath = buildString {
-                // In system_server the in-APK entries below can only ever be refused: /data/app is
-                // apk_data_file, which that domain may read and map but never execute. The daemon
-                // stages a copy under a label we own for exactly this reason, and it has to come
-                // first, because findLibrary answers with the first candidate it can open.
                 if (isSystemServer) {
-                    module.code.nativeLibraryDir?.let {
-                        append(it).append(File.pathSeparator)
-                    }
+                    module.code.nativeLibraryDir?.let { append(it).append(File.pathSeparator) }
                 }
                 val abis =
                     if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS
@@ -115,8 +150,6 @@ object AevixModuleManager {
                     append(module.apkPath).append("!/lib/").append(abi).append(File.pathSeparator)
                 }
             }
-
-            // Create the isolated ClassLoader for the module
             val initLoader = XposedModule::class.java.classLoader
             val moduleClassLoader =
                 AevixModuleClassLoader.loadApk(
@@ -126,81 +159,82 @@ object AevixModuleManager {
                     initLoader,
                     blockLegacyApi = module.code.targetApiVersion >= 102,
                 )
-
-            // Security/Integrity Check: Ensure the module isn't bundling its own API classes
-            if (
-                moduleClassLoader.loadClass(XposedModule::class.java.name).classLoader !==
-                    initLoader
-            ) {
+            if (moduleClassLoader.loadClass(XposedModule::class.java.name).classLoader !== initLoader) {
                 Log.e(TAG, "The Xposed API classes are compiled into ${module.packageName}")
                 return null
             }
-
-            // Create the Context that will be injected into the module
-            val aevixContext =
+            val context =
                 AevixContext(
                     packageName = module.packageName,
                     applicationInfo = module.applicationInfo,
-                    service = module.service, // Our IPC client
+                    service = module.service,
                     defaultExceptionMode =
                         if (module.code.exceptionPassthrough) ExceptionMode.PASSTHROUGH
                         else ExceptionMode.PROTECTIVE,
                 )
-
-            // Register any native JNI entrypoints declared by the module. This has to happen before
-            // the entry classes run: a module is free to load its libraries from its constructor or
-            // from onModuleLoaded, and an entrypoint recorded afterwards is one the dlopen hook has
-            // already missed. The legacy loader has always done it in this order.
-            module.code.moduleLibraryNames.forEach { libraryName ->
-                NativeAPI.recordNativeEntrypoint(libraryName)
-            }
-
-            // Instantiate the module entry classes
-            val entries = mutableListOf<XposedModule>()
+            val constructors = mutableListOf<Constructor<*>>()
+            val unusable = mutableListOf<String>()
             for (className in module.code.moduleClassNames) {
-                runCatching {
-                        val moduleClass = moduleClassLoader.loadClass(className)
-                        Log.v(TAG, "Resolving entry $moduleClass")
-
-                        if (!XposedModule::class.java.isAssignableFrom(moduleClass)) {
-                            Log.e(TAG, "Class does not extend XposedModule, skipping.")
-                            return@runCatching
-                        }
-
-                        val constructor = moduleClass.getDeclaredConstructor()
-                        constructor.isAccessible = true
-                        val moduleInstance = constructor.newInstance() as XposedModule
-
-                        // detach() is per entry: only the instance that calls it stops.
-                        moduleInstance.attachFramework(aevixContext) {
-                            AevixLifecycleManager.detach(moduleInstance)
-                        }
-
-                        entries.add(moduleInstance)
+                val entryClass =
+                    try {
+                        moduleClassLoader.loadClass(className)
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Failed to load class $className", t)
+                        unusable += "$className could not be loaded: ${describe(t)}"
+                        continue
                     }
-                    .onFailure { e -> Log.e(TAG, "Failed to instantiate class $className", e) }
+                Log.v(TAG, "Resolving entry $entryClass")
+                if (!XposedModule::class.java.isAssignableFrom(entryClass)) {
+                    Log.e(TAG, "Class $className does not extend XposedModule, skipping it")
+                    unusable += "$className does not extend XposedModule"
+                    continue
+                }
+                try {
+                    constructors += entryClass.getDeclaredConstructor()
+                } catch (e: NoSuchMethodException) {
+                    Log.e(TAG, "Class $className declares no no-argument constructor", e)
+                    unusable += "$className has no no-argument constructor: " +
+                        describeConstructors(entryClass)
+                }
             }
-
-            // A generation with nothing in it is not a generation. Every entry class can fail to
-            // instantiate - a constructor that throws, a class that does not extend XposedModule -
-            // and each of those is logged and skipped above, which used to leave an empty list that
-            // every caller then treated as success: the initial load reported the module loaded,
-            // and a hot reload committed the empty generation, never called onHotReloaded, never
-            // unhooked the old hooks, and answered SUCCEEDED while the process went on running the
-            // previous generation. The module was then wedged, because the committed generation had
-            // no live entry for any later reload to hand over to.
-            if (entries.isEmpty()) {
-                Log.e(TAG, "No entry class of ${module.packageName} could be instantiated")
+            if (constructors.isEmpty()) {
+                Log.e(TAG, "No entry class of ${module.packageName} could be loaded: " +
+                    unusable.joinToString("; "))
                 return null
             }
-
-            val generation =
-                Generation(moduleClassLoader, aevixContext, entries, isSystemServer, processName)
-            return generation to entries
+            return StagedGeneration(
+                module, isSystemServer, processName, moduleClassLoader, context, constructors
+            )
         } catch (e: Throwable) {
-            Log.e(TAG, "Fatal error loading module ${module.packageName}", e)
+            Log.e(TAG, "Fatal error staging package ${module.packageName}", e)
             return null
         }
+    }
+
+    private fun describeConstructors(clazz: Class<*>): String =
+        clazz.declaredConstructors.joinToString(", ", "(", ")") { constructor ->
+            constructor.parameterTypes.joinToString(", ") { it.name }
+        }
+
+    private fun describeInstantiationFailure(className: String, t: Throwable): String {
+        if (calledFrameworkBeforeAttach(t)) {
+            return "$className calls the framework from its constructor before attachFramework; " +
+                "initialization belongs in onModuleLoaded"
+        }
+        val cause = if (t is InvocationTargetException) t.targetException else t
+        return "$className: ${describe(cause)}"
+    }
+
+    private fun calledFrameworkBeforeAttach(t: Throwable): Boolean {
+        var current: Throwable? = t
+        while (current != null) {
+            if ((current as? IllegalStateException)?.message?.contains(NOT_ATTACHED) == true) {
+                return true
+            }
+            val next = current.cause
+            current = if (next === current) null else next
+        }
+        return false
     }
 
     fun hotReload(
@@ -250,10 +284,9 @@ object AevixModuleManager {
             return unsupported("Every entry of $packageName has detached in this process")
         }
 
-        val built =
-            buildGeneration(newModule, old.isSystemServer, old.processName)
-                ?: return unsupported("Cannot build a new generation of $packageName")
-        val (newGeneration, newEntries) = built
+        val staged =
+            stageGeneration(newModule, old.isSystemServer, old.processName)
+                ?: return unsupported("Cannot stage a new generation of $packageName")
 
         // Before the callback, so registrations from inside it fail while unhook and replace work.
         // Under the hook registry's lock for this module, because a registration on another thread
@@ -262,13 +295,16 @@ object AevixModuleManager {
         // only: module code never runs inside it.
         synchronized(AevixHookBuilder.lockOf(packageName)) { old.context.freeze() }
 
+        val retiredLoader = WeakReference(old.classLoader)
+        val callbackIsSystemServer = old.isSystemServer
+        val callbackProcessName = old.processName
         var savedState: Any? = null
         val reloadingParam =
             object : HotReloadingParam {
                 override fun getExtras(): Bundle? = extras
 
                 override fun setSavedInstanceState(outState: Any?) {
-                    rejectOldGenerationState(outState, old.classLoader)
+                    retiredLoader.get()?.let { rejectOldGenerationState(outState, it) }
                     savedState = outState
                 }
             }
@@ -290,6 +326,12 @@ object AevixModuleManager {
 
         // Captured after the freeze and after old code had its chance to unhook.
         val oldHandles = AevixHookBuilder.snapshotHandles(packageName)
+        val built = staged.instantiate()
+        if (built == null) {
+            old.context.unfreeze()
+            return failed("Cannot instantiate the new generation of $packageName")
+        }
+        val (newGeneration, newEntries) = built
 
         oldEntries.forEach { AevixLifecycleManager.activeModules.remove(it) }
         // Active before the callback, so an entry detaching from inside it is honoured.
@@ -297,9 +339,9 @@ object AevixModuleManager {
 
         val reloadedParam =
             object : HotReloadedParam {
-                override fun isSystemServer(): Boolean = old.isSystemServer
+                override fun isSystemServer(): Boolean = callbackIsSystemServer
 
-                override fun getProcessName(): String = old.processName
+                override fun getProcessName(): String = callbackProcessName
 
                 override fun getExtras(): Bundle? = extras
 
@@ -317,12 +359,14 @@ object AevixModuleManager {
 
         var failure: Throwable? = null
         // The default onHotReloaded already unhooks these; doing both would double-unhook.
-        newEntries
-            .filter { AevixLifecycleManager.isActive(it) }
-            .forEach {
-                if (failure != null) return@forEach
-                runCatching { it.onHotReloaded(reloadedParam) }.onFailure { t -> failure = t }
-            }
+        synchronized(old) {
+            newEntries
+                .filter { AevixLifecycleManager.isActive(it) }
+                .forEach {
+                    if (failure != null) return@forEach
+                    runCatching { it.onHotReloaded(reloadedParam) }.onFailure { t -> failure = t }
+                }
+        }
 
         // The last framework-owned reference to the old generation goes with this frame: its map
         // entry is gone, its entries are out of activeModules, and oldEntries dies on return.
