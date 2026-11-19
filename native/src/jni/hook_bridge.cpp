@@ -876,21 +876,50 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     // No callbacks means the dispatcher can invoke the original without allocating JNI arrays.
     if (hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()) return nullptr;
 
-    // Get the generic Object class
+    // Resolve the generic Object class and the Object[] class without assuming JNI allocation
+    // succeeded. A null element class passed to NewObjectArray is a native crash, not a safe miss.
     jclass obj_class = env->FindClass("java/lang/Object");
+    if (obj_class == nullptr) {
+        env->ExceptionClear();
+        return nullptr;
+    }
 
-    // Construct the result array Object[2][]
-    // Use an existing array to reliably get the Class for Object[]
+    // Construct the result array Object[2][] using an existing array to obtain Object[].
     jobjectArray dummy_array = env->NewObjectArray(0, obj_class, nullptr);
+    if (dummy_array == nullptr) {
+        env->DeleteLocalRef(obj_class);
+        env->ExceptionClear();
+        return nullptr;
+    }
     jclass obj_array_class = env->GetObjectClass(dummy_array);
+    env->DeleteLocalRef(dummy_array);
+    if (obj_array_class == nullptr) {
+        env->DeleteLocalRef(obj_class);
+        env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray res = env->NewObjectArray(2, obj_array_class, nullptr);
+    env->DeleteLocalRef(obj_array_class);
+    if (res == nullptr) {
+        env->DeleteLocalRef(obj_class);
+        env->ExceptionClear();
+        return nullptr;
+    }
 
-    // Create modern and legacy arrays
-    // Use 'callback_class' (AevixHookRecord) for the modern array for strict type safety
+    // Create modern and legacy arrays. Check both before writing either one.
+    // Use 'callback_class' (AevixHookRecord) for the modern array for strict type safety.
     jobjectArray modern =
         env->NewObjectArray((jsize)hook_item->modern_callbacks.size(), callback_class, nullptr);
     jobjectArray legacy =
         env->NewObjectArray((jsize)hook_item->legacy_callbacks.size(), obj_class, nullptr);
+    env->DeleteLocalRef(obj_class);
+    if (modern == nullptr || legacy == nullptr) {
+        if (modern != nullptr) env->DeleteLocalRef(modern);
+        if (legacy != nullptr) env->DeleteLocalRef(legacy);
+        env->DeleteLocalRef(res);
+        env->ExceptionClear();
+        return nullptr;
+    }
 
     jsize i = 0;
     for (const auto &callback_pair : hook_item->modern_callbacks) {
