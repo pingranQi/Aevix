@@ -63,7 +63,6 @@ object Main {
                         if (org.aevix.impl.hookers.HandleSystemServerProcessHooker
                                 .systemServerCL != null
                         ) {
-                            android.util.Log.i("AevixDiag", "fallback: system init already done")
                             break
                         }
                         val cl =
@@ -74,14 +73,11 @@ object Main {
                                 }
                                 .getOrNull()
                         if (cl != null) {
-                            android.util.Log.i("AevixDiag", "fallback initSystemServer cl=$cl")
                             runCatching {
                                     org.aevix.impl.hookers.HandleSystemServerProcessHooker
                                         .initSystemServer(cl, isLate = false)
                                 }
-                                .onFailure {
-                                    android.util.Log.e("AevixDiag", "fallback init failed", it)
-                                }
+                                .onFailure { Utils.logE("Fallback system server init failed", it) }
                             break
                         }
                         Thread.sleep(250)
@@ -104,22 +100,15 @@ object Main {
             ?.let { muted -> Log.muted = muted }
 
         // Check if this process is the designated Aevix Manager.
-        android.util.Log.i(
-            "AevixDiag",
-            "forkCommon entry check: nice=$niceName expectedMgr=${BuildConfig.ManagerPackageName} isSystem=$isSystem",
-        )
         if (niceName == BuildConfig.ManagerPackageName) {
             ParasiticManagerHooker.isParasitic = Process.myUid() == BuildConfig.HostPackageUid
             val type = if (ParasiticManagerHooker.isParasitic) "parasitic" else "user-installed"
-            android.util.Log.i("AevixDiag", "manager process detected ($type uid=${Process.myUid()})")
             val started =
                 runCatching { ParasiticManagerHooker.start() }
                     .onFailure {
                         Utils.logE("Parasitic manager start failed", it)
-                        android.util.Log.e("AevixDiag", "ParasiticManagerHooker.start threw", it)
                     }
                     .getOrDefault(false)
-            android.util.Log.i("AevixDiag", "ParasiticManagerHooker.start returned $started")
             if (started) {
                 Utils.logI("Manager ($type) loaded into host, skipping standard bootstrap.")
                 return
