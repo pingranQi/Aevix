@@ -71,12 +71,30 @@ private val artMethodField: Field? by lazy {
 class AevixContext(
     private val packageName: String,
     private val applicationInfo: ApplicationInfo,
-    private val service: IModuleService,
+    @Volatile private var service: IModuleService,
     // What ExceptionMode.DEFAULT resolves to for this module, from module.prop.
     private val defaultExceptionMode: ExceptionMode = ExceptionMode.PROTECTIVE,
 ) : XposedInterface {
 
     private val remotePrefs = ConcurrentHashMap<String, SharedPreferences>()
+    private val serviceLock = Any()
+    internal fun reconnectService(replacement: IModuleService): Boolean {
+        val preferences =
+            synchronized(serviceLock) {
+                service = replacement
+                remotePrefs.values.toList()
+            }
+        var restored = true
+        preferences.forEach { prefs ->
+            runCatching { (prefs as AevixRemotePreferences).reconnect(replacement) }
+                .onFailure {
+                    restored = false
+                    Log.e(TAG, "Cannot reconnect remote preferences for $packageName", it)
+                }
+        }
+        return restored
+    }
+
     @Volatile private var frozen = false
 
     fun freeze() {
@@ -175,7 +193,7 @@ class AevixContext(
     override fun getModuleApplicationInfo(): ApplicationInfo = applicationInfo
 
     override fun getRemotePreferences(name: String): SharedPreferences {
-        return remotePrefs.getOrPut(name) { AevixRemotePreferences(service, name) }
+        return synchronized(serviceLock) { remotePrefs.getOrPut(name) { AevixRemotePreferences(service, name) } }
     }
 
     override fun listRemoteFiles(): Array<String> {
