@@ -12,6 +12,9 @@ import android.content.pm.ResolveInfo
 import android.content.pm.VersionedPackage
 import android.net.Uri
 import android.os.Build
+import android.os.Binder
+import android.os.IBinder
+import android.os.Parcel
 import android.os.Bundle
 import android.provider.Settings
 import android.os.IBinder
