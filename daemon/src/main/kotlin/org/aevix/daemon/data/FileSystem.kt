@@ -314,6 +314,15 @@ object FileSystem {
 
     val preLoadedApk = ModuleCode()
     val preLoadedDexes = mutableListOf<SharedMemory>()
+
+    // Until ModuleCode takes ownership, this local list owns every opened DEX mapping.
+    // A failed load must close all of them before returning.
+    fun fail(reason: ModuleLoad): ModuleLoad {
+      preLoadedDexes.forEach { runCatching { it.close() } }
+      preLoadedDexes.clear()
+      return reason
+    }
+
     val moduleClassNames = mutableListOf<String>()
     val moduleLibraryNames = mutableListOf<String>()
     var isLegacy = false
