@@ -16,11 +16,28 @@ class ProcessScopeResolverTest {
     }
 
     @Test
+    fun pccUidTranslationHonorsInclusiveRangeBoundaries() {
+        assertEquals(10000, appUidOf(30000))
+        assertEquals(19999, appUidOf(39999))
+        assertEquals(29999, appUidOf(29999))
+        assertEquals(40000, appUidOf(40000))
+        assertEquals(110000, appUidOf(130000))
+    }
+
+    @Test
     fun pccProcessUsesOwningApplicationScope() {
         val modules = mutableListOf<LoadedModule>()
         val scopes = mapOf(ProcessScope("com.example.app", 10202) to modules)
 
         assertSame(modules, resolveModulesForProcess(scopes, "com.example.app", 30202))
+    }
+
+    @Test
+    fun pccProcessCannotBorrowAnotherUsersApplicationScope() {
+        val modules = mutableListOf<LoadedModule>()
+        val scopes = mapOf(ProcessScope("com.example.app", 10202) to modules)
+
+        assertNull(resolveModulesForProcess(scopes, "com.example.app", 130202))
     }
 
     @Test
