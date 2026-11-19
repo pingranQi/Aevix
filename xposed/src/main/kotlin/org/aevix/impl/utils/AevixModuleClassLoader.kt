@@ -2,6 +2,7 @@ package org.aevix.impl.utils
 
 import android.os.Build
 import android.os.SharedMemory
+import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
