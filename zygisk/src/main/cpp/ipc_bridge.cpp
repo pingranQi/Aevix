@@ -512,6 +512,11 @@ bool IPCBridge::ShouldInvalidateArtInlineHooks(JNIEnv *env, jobject binder) {
     bool success = lsplant::JNI_CallBooleanMethod(
         env, binder, transact_method_, kInvalidateArtInlineHooksTransactionCode,
         parcels.data.get(), parcels.reply.get(), 0);
+    if (env->ExceptionCheck()) {
+        LOGW("Binder exception while querying ART inline hook invalidation policy.");
+        env->ExceptionClear();
+        return false;
+    }
     if (!success) {
         LOGW("ART inline hook invalidation policy query failed.");
         return false;
@@ -523,7 +528,13 @@ bool IPCBridge::ShouldInvalidateArtInlineHooks(JNIEnv *env, jobject binder) {
         env->ExceptionClear();
         return false;
     }
-    return lsplant::JNI_CallIntMethod(env, parcels.reply.get(), read_int_method_) != 0;
+    const jint result = lsplant::JNI_CallIntMethod(env, parcels.reply.get(), read_int_method_);
+    if (env->ExceptionCheck()) {
+        LOGW("Cannot read ART inline hook invalidation policy reply.");
+        env->ExceptionClear();
+        return false;
+    }
+    return result != 0;
 }
 
 jboolean IPCBridge::ExecTransact_Replace(jboolean *res, JNIEnv *env, jobject obj, va_list args) {
