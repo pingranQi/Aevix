@@ -16,5 +16,9 @@ synthetics, duplicate DEX classes, corrupt DEX input, atomic-move fallback, and
 single-DEX capacity rejection. Build and failure logs are retained in the output
 directory.
 
-This is a host-side build regression test. It does not replace an on-device
-`InMemoryDexClassLoader` check or a full Android build/test run.
+For an additional device-side record-loading check, compile
+`runtime/RecordTagRuntimeProbe.java` against the Android 27+ SDK, push the resulting
+DEX and the generated `debug-vector.dex` to a disposable test device, and run the
+probe with `app_process`. Do not run it inside system_server.
+
+The host fixture does not replace a full Android build/test run.
