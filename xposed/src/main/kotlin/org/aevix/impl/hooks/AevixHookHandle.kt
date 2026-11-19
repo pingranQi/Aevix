@@ -47,7 +47,9 @@ internal object AevixHookRegistry {
         byModule[moduleId]?.remove(handle)
     }
 
-    /** The hooks of [moduleId] that are still installed, for `HotReloadedParam#getOldHookHandles`. */
+    /**
+     * The hooks of [moduleId] that are still installed, for `HotReloadedParam#getOldHookHandles`.
+     */
     fun liveHandles(moduleId: String): List<HookHandle> =
         byModule[moduleId]?.filter { it.isLive } ?: emptyList()
 }
@@ -70,35 +72,34 @@ internal constructor(
     initialRecord: AevixHookRecord,
 ) : HookHandle {
 
-    @Volatile
-    internal var record: AevixHookRecord = initialRecord
+    private val id = initialRecord.id
+    @Volatile internal var record: AevixHookRecord? = initialRecord
         private set
 
-    @Volatile
-    internal var isLive: Boolean = true
-        private set
+    internal val isLive: Boolean
+        get() = record != null
 
     override fun getExecutable(): Executable = origin
 
-    override fun getId(): String? = record.id
+    override fun getId(): String? = id
 
     override fun unhook() {
         if (moduleId == null) {
             synchronized(this) {
-                if (!isLive) return
-                isLive = false
+                val current = record ?: return
+                HookBridge.unhookMethod(true, origin, current)
+                record = null
             }
-            HookBridge.unhookMethod(true, origin, record)
             return
         }
         synchronized(AevixHookRegistry.lockOf(moduleId)) {
             // Idempotent, as the interface requires - and a handle that has already been superseded
             // has to stay quiet here rather than tear down its own replacement.
-            if (!isLive) return
-            isLive = false
-            record.id?.let { AevixHookRegistry.releaseId(moduleId, origin, it, this) }
+            val current = record ?: return
+            HookBridge.unhookMethod(true, origin, current)
+            record = null
+            id?.let { AevixHookRegistry.releaseId(moduleId, origin, it, this) }
             AevixHookRegistry.forget(moduleId, this)
-            HookBridge.unhookMethod(true, origin, record)
         }
     }
 
@@ -110,11 +111,12 @@ internal constructor(
             this.moduleId ?: throw IllegalStateException("This hook does not belong to a module")
 
         synchronized(AevixHookRegistry.lockOf(moduleId)) {
-            if (!isLive) throw IllegalStateException("This hook handle is no longer valid")
+            val current =
+                record ?: throw IllegalStateException("This hook handle is no longer valid")
             // Everything but the hooker is inherited, which is what distinguishes this from
             // registering a new hook that happens to carry the same id.
             return swapLocked(
-                AevixHookRecord(hooker, record.priority, record.exceptionMode, record.id)
+                AevixHookRecord(hooker, current.priority, current.exceptionMode, current.id)
             )
         }
     }
@@ -125,18 +127,17 @@ internal constructor(
      */
     internal fun swapLocked(replacement: AevixHookRecord): AevixHookHandle {
         val moduleId = checkNotNull(moduleId)
-        if (
-            !HookBridge.replaceCallback(true, origin, record, replacement, replacement.priority)
-        ) {
+        val current = record ?: throw IllegalStateException("This hook handle is no longer valid")
+        val handle = AevixHookHandle(origin, moduleId, replacement)
+        if (!HookBridge.replaceCallback(true, origin, current, replacement, replacement.priority)) {
             // The record was not where we left it, and nothing was changed, so whatever hook is
             // installed now stays installed.
             throw HookFailedError("Cannot replace the hook on $origin")
         }
 
-        isLive = false
+        record = null
         AevixHookRegistry.forget(moduleId, this)
 
-        val handle = AevixHookHandle(origin, moduleId, replacement)
         AevixHookRegistry.track(moduleId, handle)
         replacement.id?.let { AevixHookRegistry.claimId(moduleId, origin, it, handle) }
         return handle
