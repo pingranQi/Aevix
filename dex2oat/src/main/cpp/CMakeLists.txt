@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(dex2oat)
 
+# Prevent the NDK toolchain from re-enabling host-side C++ module scanning in nested projects.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 add_executable(dex2oat dex2oat.cpp)
 add_library(oat_hook SHARED oat_hook.cpp)
 
