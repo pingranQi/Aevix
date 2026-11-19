@@ -211,23 +211,21 @@ inline int HookInline(void *original, void *replace, void **backup) {
 inline int UnhookInline(void *original) {
 #if defined(__aarch64__) || defined(__arm__)
     if (g_inline_hook_backend.load(std::memory_order_relaxed) == kInlineHookBackendShadowHook) {
-        void *stub = nullptr;
         {
+            // Keep the stub registered until ShadowHook confirms the unhook. Erasing it first
+            // loses the only handle needed to retry after a transient unhook failure.
             std::lock_guard<std::mutex> lk(g_shadowhook_mutex);
             auto it = g_shadowhook_stubs.find(reinterpret_cast<uintptr_t>(original));
             if (it != g_shadowhook_stubs.end()) {
-                stub = it->second;
-                g_shadowhook_stubs.erase(it);
+                if (shadowhook_unhook(it->second) == 0) {
+                    g_shadowhook_stubs.erase(it);
+                    logUnhookedSymbol(kInlineHookBackendShadowHook, original);
+                    return 0;
+                }
+                LOGE("Inline Unhook with ShadowHook failed: %s (%p)",
+                     shadowhook_to_errmsg(shadowhook_get_errno()), original);
+                return -1;
             }
-        }
-        if (stub != nullptr) {
-            if (shadowhook_unhook(stub) == 0) {
-                logUnhookedSymbol(kInlineHookBackendShadowHook, original);
-                return 0;
-            }
-            LOGE("Inline Unhook with ShadowHook failed: %s (%p)",
-                 shadowhook_to_errmsg(shadowhook_get_errno()), original);
-            return -1;
         }
     }
 #endif
