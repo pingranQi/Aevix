@@ -59,7 +59,11 @@ object AevixService : IAevixDaemon.Stub() {
       appThread: IBinder?,
       activityToken: IBinder?,
   ) {
-    if (Binder.getCallingUid() != Process.SYSTEM_UID || appThread == null) return
+    if (
+        Binder.getCallingUid() != Process.SYSTEM_UID ||
+            !FrameworkService.isSystemServerRegistered(Binder.getCallingPid()) ||
+            appThread == null
+    ) return
     if (contextOwner == appThread) return
     SystemContext.appThread = IApplicationThread.Stub.asInterface(appThread)
     SystemContext.token = activityToken
