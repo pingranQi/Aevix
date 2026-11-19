@@ -1,5 +1,6 @@
 #include "core/art_inline_hook_invalidation.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <link.h>
 #include <sys/mman.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <mutex>
 #include <vector>
 
@@ -42,6 +44,29 @@ struct LibArtSnapshotResult {
 };
 
 std::vector<PreservedExecutablePage> g_preserved_art_pages;
+
+
+bool IsSingleThreadedProcess() {
+    DIR *tasks = opendir("/proc/self/task");
+    if (!tasks) {
+        PLOGE("Cannot inspect /proc/self/task; refusing ART executable mapping replacement");
+        return false;
+    }
+    size_t count = 0;
+    while (dirent *entry = readdir(tasks)) {
+        if (entry->d_name[0] == '.') continue;
+        char *end = nullptr;
+        (void)strtol(entry->d_name, &end, 10);
+        if (end == entry->d_name || *end != 0) continue;
+        if (++count > 1) break;
+    }
+    closedir(tasks);
+    if (count != 1) {
+        LOGW("Refusing ART executable mapping replacement in a process with {} threads", count);
+        return false;
+    }
+    return true;
+}
 
 bool IsLibArtPath(const char *path) {
     if (!path || *path == '\0') return false;
@@ -265,6 +290,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
     }
 
     bool success = true;
+    bool any_segment_replaced = false;
     const auto *clean_file = static_cast<const uint8_t *>(file_map);
 
     for (ElfW(Half) i = 0; i < info->dlpi_phnum; ++i) {
@@ -277,6 +303,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         const size_t segment_size = static_cast<size_t>(phdr.p_filesz);
         if (file_offset > file_size || segment_size > file_size - file_offset) {
             LOGE("Executable libart segment {} exceeds backing file bounds", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -285,6 +312,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             static_cast<uintptr_t>(info->dlpi_addr) + static_cast<uintptr_t>(phdr.p_vaddr);
         if (segment_size > UINTPTR_MAX - segment_start) {
             LOGE("Executable libart segment {} address range overflows", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -296,6 +324,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         const size_t first_page_prefix = static_cast<size_t>(segment_start & page_mask);
         if (file_offset < first_page_prefix) {
             LOGE("Executable libart segment {} has an invalid page-aligned file offset", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -315,7 +344,8 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             const uintptr_t next_page = page_start + page_size;
             if (next_page < page_start) {
                 LOGE("Page range overflow while invalidating libart.so");
-                success = false;
+                if (any_segment_replaced) std::abort();
+            success = false;
                 break;
             }
 
@@ -339,12 +369,14 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         const size_t mapping_span = first_page_prefix + segment_size;
         if (mapping_span > SIZE_MAX - page_mask) {
             LOGE("Executable libart segment {} mapping size overflows", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
         const size_t mapping_size = (mapping_span + page_mask) & ~page_mask;
         if (mapping_size > UINTPTR_MAX - mapping_start) {
             LOGE("Executable libart segment {} aligned address range overflows", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -352,6 +384,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (first_page_file_offset > file_size ||
             mapping_size > file_size - first_page_file_offset) {
             LOGE("Executable libart segment {} aligned mapping exceeds backing file bounds", i);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -360,6 +393,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         // its mapping. If this fails, leave the original mapping and every external hook intact.
         if (!PreparePreservedPagesForRewrite(mapping_start, mapping_end, original_protection,
                                              page_size)) {
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
@@ -370,12 +404,14 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (mapped == MAP_FAILED) {
             PLOGE("Failed to invalidate executable libart segment {} at {} from backing offset {}",
                   i, reinterpret_cast<void *>(mapping_start), first_page_file_offset);
+            if (any_segment_replaced) std::abort();
             success = false;
             continue;
         }
+        any_segment_replaced = true;
         if (!RestorePreservedPages(mapping_start, mapping_end, original_protection, page_size)) {
-            success = false;
-            continue;
+            LOGE("libart.so segment was replaced but preserved hooks could not be restored; terminating to avoid a partially restored ART image");
+            std::abort();
         }
         __builtin___clear_cache(reinterpret_cast<char *>(mapping_start),
                                 reinterpret_cast<char *>(mapping_end));
@@ -469,6 +505,12 @@ bool InvalidateArtInlineHooksIfEnabled() {
         LOGI("No Vector/LSPlant ART inline-hook targets were installed; invalidation is unnecessary.");
         return true;
     }
+
+    // MAP_FIXED replaces executable mappings process-wide. Refuse unless this process is
+    // single-threaded: otherwise another thread could execute a page while it is replaced.
+    // With one thread, this thread is the only possible creator of another thread and remains
+    // in this routine until every mapping is complete.
+    if (!IsSingleThreadedProcess()) return false;
 
     // Deliberately do not call DobbyDestroy/UnhookInline here. LSPosed-style invalidation is a
     // compatibility operation, not normal hook teardown: restore libart.so's file-backed executable

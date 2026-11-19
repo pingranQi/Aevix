@@ -8,8 +8,8 @@ import org.apache.commons.lang3.SerializationUtilsX
 
 private const val TAG = "AevixPreferenceStore"
 private const val ART_INLINE_HOOK_PACKAGES_KEY = "invalidate_art_inline_hook_packages"
-private const val SYSTEM_UI_VIRTUAL_PACKAGE = "system"
-private const val SYSTEM_UI_PROCESS = "system:ui"
+const val SYSTEM_UI_VIRTUAL_PACKAGE = "system"
+const val SYSTEM_UI_PROCESS = "system:ui"
 
 object PreferenceStore {
 
