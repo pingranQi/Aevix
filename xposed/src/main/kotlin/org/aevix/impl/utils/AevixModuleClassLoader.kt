@@ -16,7 +16,6 @@ import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.Enumeration
 import java.util.jar.JarFile
-import java.util.stream.Collectors
 import java.util.zip.ZipEntry
 import org.aevix.nativebridge.HookBridge
 
@@ -185,44 +184,17 @@ class AevixModuleClassLoader : ByteBufferDexClassLoader {
             parent: ClassLoader?,
             blockLegacyApi: Boolean = false,
         ): ClassLoader {
-            val dexBuffers =
-                dexes
-                    .parallelStream()
-                    .map { dex ->
-                        try {
-                            dex.mapReadOnly()
-                        } catch (e: ErrnoException) {
-                            Log.w(TAG, "Cannot map $dex", e)
-                            null
-                        }
-                    }
-                    .collect(Collectors.toList())
-                    .filterNotNull()
-                    .toTypedArray()
-
-            val cl =
+            return withConsumedDexBuffers(dexes) { dexBuffers ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     AevixModuleClassLoader(
-                        dexBuffers,
-                        librarySearchPath,
-                        parent,
-                        apk,
-                        blockLegacyApi,
+                        dexBuffers, librarySearchPath, parent, apk, blockLegacyApi
                     )
                 } else {
                     AevixModuleClassLoader(
-                        dexBuffers,
-                        parent,
-                        apk,
-                        librarySearchPath,
-                        blockLegacyApi,
+                        dexBuffers, parent, apk, librarySearchPath, blockLegacyApi
                     )
                 }
-
-            dexBuffers.toList().parallelStream().forEach { SharedMemory.unmap(it) }
-            dexes.parallelStream().forEach { it.close() }
-
-            return cl
+            }
         }
     }
 }
