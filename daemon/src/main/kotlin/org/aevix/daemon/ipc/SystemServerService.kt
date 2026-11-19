@@ -6,6 +6,7 @@ import android.os.IBinder
 import android.os.IClientCallback
 import android.os.IServiceCallback
 import android.os.Parcel
+import android.os.Process
 import android.os.ServiceManager
 import android.util.Log
 import org.aevix.ipc.IFrameworkService
@@ -102,7 +103,8 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
 
   // Latched from a binder thread when system_server attaches, cleared from another when it dies,
   // and read on the daemon's main thread.
-  @Volatile var systemServerRequested = false
+  val systemServerRequested: Boolean
+    get() = FrameworkService.isSystemServerRegistered()
 
   fun registerProxyService(serviceName: String) {
     // Register as the service name early to setup an IPC for `system_server`.
@@ -152,22 +154,21 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
    * Registers system_server and answers with its framework service, or null if this is not
    * system_server. Only ever called from [onTransact] below.
    */
-  private fun attachProcess(
+  internal fun attachProcess(
       uid: Int,
       pid: Int,
       processName: String,
-      processLifeToken: IBinder?
+      processLifeToken: IBinder?,
   ): IFrameworkService? {
-    if (uid != 1000 || processLifeToken == null || processName != "system") return null
+    if (
+        uid != Process.SYSTEM_UID ||
+            processLifeToken == null ||
+            processName != "system" ||
+            Binder.getCallingUid() != uid ||
+            Binder.getCallingPid() != pid
+    ) return null
 
-    // Latched only once the registration has actually succeeded, not on the way in. It used to be
-    // set immediately after the gate above, so a registration that then failed — registerHeartBeat
-    // answers false when the life token cannot be linked to death — still read as attached. The
-    // symptom was the worst kind: the manager's status page reported the framework as present in
-    // system_server while no module hooking the system ever loaded, which sends a reader looking
-    // at their module instead of at the injection.
     if (!FrameworkService.registerHeartBeat(uid, pid, processName, processLifeToken)) return null
-    systemServerRequested = true
     return FrameworkService
   }
 
