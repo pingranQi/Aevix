@@ -297,11 +297,11 @@ object AevixDaemon {
             // never goes down, and far enough along that ladder the mitigation stops being
             // a reboot: the device is sent to recovery to be asked whether to erase itself.
             //
-            // The two cases are still worth telling apart for whoever reads the log afterwards.
-            // `systemServerRequested` is latched from inside `postServerSpecialize`, so a live
-            // `activity` with nothing behind it means no module arrived at all.
+            // This is the live process-registration state, not a boot-time latch. A fresh
+            // daemon starts with an empty registry and becomes attached only after system_server
+            // completes the authenticated reattachment handshake.
             if (!SystemServerService.systemServerRequested) {
-              Log.e(TAG, "No Aevix module reached system_server; leaving it running")
+              Log.e(TAG, "system_server has not completed an Aevix daemon attachment")
             } else {
               Log.e(TAG, "Aevix reached system_server but its bridge never answered")
             }
