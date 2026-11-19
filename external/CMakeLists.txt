@@ -20,7 +20,7 @@ option(LSPLANT_BUILD_SHARED OFF)
 option(Plugin.SymbolResolver OFF)
 option(FMT_INSTALL OFF)
 # This project uses fmt-header-only; the optional fmt C++ module cannot be scanned by the Android cross-toolchain.
-option(FMT_MODULE OFF)
+set(FMT_MODULE OFF CACHE BOOL "Disable the unused fmt C++ module" FORCE)
 
 add_subdirectory(dobby)
 add_subdirectory(fmt)
