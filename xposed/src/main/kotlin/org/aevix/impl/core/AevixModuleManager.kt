@@ -17,6 +17,7 @@ import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.ConcurrentHashMap
 import org.aevix.ipc.HotReloadOutcome
 import org.aevix.ipc.LoadedModule
+import org.aevix.ipc.IAevixDaemon
 import org.aevix.util.Log
 import org.aevix.impl.AevixContext
 import org.aevix.impl.AevixLifecycleManager
@@ -41,6 +42,8 @@ object AevixModuleManager {
         entries: List<XposedModule>,
         val isSystemServer: Boolean,
         val processName: String,
+        val loadedVersionCode: Long,
+        val hotReloadable: Boolean,
     ) {
         private val entryRefs = entries.map { WeakReference(it) }
 
@@ -59,6 +62,28 @@ object AevixModuleManager {
 
     /** Packages of the modules currently loaded in this process. */
     fun loadedModulePackages(): Set<String> = generations.keys.toSet()
+
+    internal fun reconnectSystemServerServices(daemon: IAevixDaemon): Boolean {
+        var restored = true
+        generations.forEach { (packageName, generation) ->
+            if (!generation.isSystemServer) return@forEach
+            runCatching {
+                val replacement =
+                    daemon.reconnectSystemModule(
+                        packageName,
+                        generation.loadedVersionCode,
+                        generation.hotReloadable,
+                    )
+                if (replacement != null && generations[packageName] === generation) {
+                    if (!generation.context.reconnectService(replacement)) restored = false
+                }
+            }.onFailure {
+                restored = false
+                Log.e(TAG, "Cannot reconnect module service for $packageName", it)
+            }
+        }
+        return restored
+    }
 
     /**
      * Loads a module APK, instantiates its entry classes, and binds them to the Aevix framework.
@@ -128,7 +153,15 @@ object AevixModuleManager {
                     failures.joinToString("; "))
                 return null
             }
-            return Generation(classLoader, context, entries, isSystemServer, processName) to entries
+            return Generation(
+                classLoader,
+                context,
+                entries,
+                isSystemServer,
+                processName,
+                module.versionCode,
+                module.code.moduleClassNames.size == 1,
+            ) to entries
         }
     }
 
