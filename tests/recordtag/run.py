@@ -33,8 +33,8 @@ def match(pattern, source, label):
     return result.group(1)
 
 
-implementation = section(script, "/** Package AGP", "\ndependencies {")
-registration = section(script, "        // Keep prepared output separate", "        // Using Sync")
+implementation = section(script, "abstract class PrepareFrameworkDex", "\ndependencies {")
+registration = section(script, "        // Keep the prepared artifact separate", "        // Using Sync")
 
 
 def setting(name):
