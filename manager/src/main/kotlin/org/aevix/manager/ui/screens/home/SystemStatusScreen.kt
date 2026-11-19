@@ -40,7 +40,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -108,7 +107,10 @@ fun SystemStatusScreen(
     // Both the shortcut and the install can be undone from outside the app while it is open —
     // dragged off the home screen, uninstalled from Settings — so what the rows offer is re-read on
     // arrival rather than trusted from whenever the ViewModel was built.
-    LaunchedEffect(Unit) { viewModel.refreshPresence() }
+    LaunchedEffect(Unit) {
+        viewModel.refreshPresence()
+        viewModel.refreshInlineHookInvalidation()
+    }
 
     val sections = buildSections(status, device, context)
     // The same page again, in English, for the clipboard.
