@@ -757,6 +757,7 @@ class HomeViewModel(
         val current = flow.value
         if (
             !current.loaded ||
+                current.loading ||
                 packageName in current.savingPackages ||
                 (packageName in current.selectedPackages) == enabled
         ) {
