@@ -423,4 +423,12 @@
     <string name="action_install_other_user_prompt_app">이 앱을 설치할 사용자를 선택하세요.</string>
     <string name="action_installed_other_user">%1$s에 설치했습니다.</string>
     <string name="action_install_other_user_failed">%1$s에 설치하지 못했습니다.</string>
+    <string name="action_invalidate_art_inline_hooks">ART 인라인 후크 호환 모드</string>
+    <string name="action_invalidate_art_inline_hooks_summary">선택한 각 앱에서 모듈이나 후크 수와 관계없이 Aevix의 ART 인라인 후크를 전역적으로 무효화합니다. 일부 모듈이 작동하지 않거나 앱이 오작동하거나 충돌할 수 있습니다. 각 앱을 다음에 시작할 때 적용됩니다.</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">%1$s의 ART 인라인 후크 호환 모드를 사용 설정했습니다.</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">%1$s의 ART 인라인 후크 호환 모드를 사용 중지했습니다.</string>
+    <string name="action_invalidate_art_inline_hooks_failed">%1$s의 ART 인라인 후크 호환 모드를 변경하지 못했습니다.</string>
+    <string name="daemon_down_title">Aevix 데몬이 실행되고 있지 않습니다</string>
+    <string name="daemon_down_summary">이 페이지에서 Aevix에 요청을 보낼 수 없으므로 프레임워크 상태를 표시하는 항목은 현재 상태를 알 수 없습니다. 루트 관리자에서 Aevix 모듈이 설치되고 사용 설정되어 있는지 확인하세요. 루트 구현이 부팅 후 커널 모듈을 로드한다면 해당 부팅에서 post-fs-data가 건너뛰어져 Aevix 정책이 적용되지 않고 데몬도 시작되지 않았을 수 있습니다. 모듈을 로드한 뒤 소프트 재부팅하거나 루트 관리자의 post-fs-data 재실행 기능을 사용한 다음 이 페이지를 다시 여세요.</string>
+    <string name="info_daemon_not_running">— (데몬 실행 중 아님)</string>
 </resources>
