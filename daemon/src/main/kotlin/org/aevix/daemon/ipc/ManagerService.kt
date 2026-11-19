@@ -236,6 +236,26 @@ object ManagerService : IManagerService.Stub() {
   fun isRunningManager(pid: Int, uid: Int): Boolean =
       pid == managerPid && ConfigCache.isManager(uid)
 
+  /**
+   * The protocol handshake is the only unauthenticated method: it is read before the manager can
+   * know whether the peer speaks this AIDL generation. Every other AIDL transaction is manager-only.
+   *
+   * Enforce at the Binder boundary rather than maintaining a list of protected methods. This also
+   * covers downstream-only methods added to this interface and future methods added later. Binder
+   * caller identity is per transaction; ManagerGuard tracks process lifetime, not call authority.
+   */
+  override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+    if (code >= IBinder.FIRST_CALL_TRANSACTION && code != IBinder.INTERFACE_TRANSACTION &&
+        code != IBinder.FIRST_CALL_TRANSACTION) {
+      val callerUid = Binder.getCallingUid()
+      if (!ConfigCache.isManager(callerUid)) {
+        Log.w(TAG, "Refusing manager binder transaction $code from uid=$callerUid")
+        throw SecurityException("uid $callerUid is not allowed to call manager service")
+      }
+    }
+    return super.onTransact(code, data, reply, flags)
+  }
+
   override fun getProtocolVersion() = IManagerService.PROTOCOL_VERSION
 
   override fun getLibxposedApiVersion() = IXposedService.LIB_API
