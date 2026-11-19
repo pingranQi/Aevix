@@ -138,7 +138,10 @@ object ManagerService : IManagerService.Stub() {
     return false
   }
 
-  fun postStartManager(pid: Int): Boolean = pid == managerPid
+  // PID values are recycled. A matching PID alone must never grant the manager binder to a
+  // different UID after the original manager process exits.
+  fun postStartManager(pid: Int, uid: Int): Boolean =
+      pid == managerPid && ConfigCache.isManager(uid)
 
   private fun getManagerIntent(): Intent? {
     if (managerIntent != null) return managerIntent
