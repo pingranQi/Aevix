@@ -350,8 +350,10 @@ object ModuleDatabase {
     return runCatching {
           val mid =
               db.compileStatement("SELECT mid FROM modules WHERE module_pkg_name = ?")
-                  .apply { bindString(1, packageName) }
-                  .simpleQueryForLong()
+                  .use { statement ->
+                    statement.bindString(1, packageName)
+                    statement.simpleQueryForLong()
+                  }
           val placeholders = claimed.joinToString(",") { "?" }
           if (claimed.isEmpty()) {
             db.delete("scope", "mid = ?", arrayOf(mid.toString()))
