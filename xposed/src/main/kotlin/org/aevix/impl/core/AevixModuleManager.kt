@@ -89,52 +89,134 @@ object AevixModuleManager {
         return true
     }
 
-    private fun buildGeneration(module: LoadedModule, isSystemServer: Boolean, processName: String): Pair<Generation, List<XposedModule>>? =
+    private fun buildGeneration(
+        module: LoadedModule,
+        isSystemServer: Boolean,
+        processName: String,
+    ): Pair<Generation, List<XposedModule>>? =
         stageGeneration(module, isSystemServer, processName)?.instantiate()
 
-    private class StagedGeneration(private val module: LoadedModule, private val isSystemServer: Boolean, private val processName: String, private val classLoader: ClassLoader, private val context: AevixContext, private val constructors: List<Constructor<*>>) {
+    private class StagedGeneration(
+        private val module: LoadedModule,
+        private val isSystemServer: Boolean,
+        private val processName: String,
+        private val classLoader: ClassLoader,
+        private val context: AevixContext,
+        private val constructors: List<Constructor<*>>,
+    ) {
         fun instantiate(): Pair<Generation, List<XposedModule>>? {
-            module.code.moduleLibraryNames.forEach { NativeAPI.recordNativeEntrypoint(it) }
+            // Native entrypoints must be visible before constructors or onModuleLoaded can dlopen.
+            module.code.moduleLibraryNames.forEach { libraryName ->
+                NativeAPI.recordNativeEntrypoint(libraryName)
+            }
+
             val entries = mutableListOf<XposedModule>()
             for (constructor in constructors) {
                 try {
                     constructor.isAccessible = true
                     val instance = constructor.newInstance() as XposedModule
-                    instance.attachFramework(context) { AevixLifecycleManager.detach(instance) }
+                    instance.attachFramework(context) {
+                        AevixLifecycleManager.detach(instance)
+                    }
                     entries.add(instance)
-                } catch (t: Throwable) { Log.e(TAG, "Failed to instantiate class ${constructor.declaringClass.name}", t) }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to instantiate class ${constructor.declaringClass.name}", t)
+                }
             }
-            if (entries.isEmpty()) { Log.e(TAG, "No entry class could be instantiated for " + module.packageName); return null }
+
+            if (entries.isEmpty()) {
+                Log.e(TAG, "No entry class could be instantiated for ${module.packageName}")
+                return null
+            }
+
             return Generation(classLoader, context, entries, isSystemServer, processName) to entries
         }
     }
 
-    private fun stageGeneration(module: LoadedModule, isSystemServer: Boolean, processName: String): StagedGeneration? {
+    /** Resolves entry classes and constructors without executing module code. */
+    private fun stageGeneration(
+        module: LoadedModule,
+        isSystemServer: Boolean,
+        processName: String,
+    ): StagedGeneration? {
         try {
-            Log.d(TAG, "Staging package " + module.packageName)
+            Log.d(TAG, "Staging package ${module.packageName}")
+
             val librarySearchPath = buildString {
-                if (isSystemServer) module.code.nativeLibraryDir?.let { append(it).append(File.pathSeparator) }
-                val abis = if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS else Build.SUPPORTED_32_BIT_ABIS
-                for (abi in abis) append(module.apkPath).append("!/lib/").append(abi).append(File.pathSeparator)
+                if (isSystemServer) {
+                    module.code.nativeLibraryDir?.let {
+                        append(it).append(File.pathSeparator)
+                    }
+                }
+                val abis =
+                    if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS
+                    else Build.SUPPORTED_32_BIT_ABIS
+                for (abi in abis) {
+                    append(module.apkPath).append("!/lib/").append(abi).append(File.pathSeparator)
+                }
             }
+
             val initLoader = XposedModule::class.java.classLoader
-            val loader = AevixModuleClassLoader.loadApk(module.apkPath, module.code.preLoadedDexes, librarySearchPath, initLoader, blockLegacyApi = module.code.targetApiVersion >= 102)
-            if (loader.loadClass(XposedModule::class.java.name).classLoader !== initLoader) { Log.e(TAG, "The Xposed API classes are compiled into " + module.packageName); return null }
-            val context = AevixContext(packageName = module.packageName, applicationInfo = module.applicationInfo, service = module.service, defaultExceptionMode = if (module.code.exceptionPassthrough) ExceptionMode.PASSTHROUGH else ExceptionMode.PROTECTIVE)
+            val moduleClassLoader =
+                AevixModuleClassLoader.loadApk(
+                    module.apkPath,
+                    module.code.preLoadedDexes,
+                    librarySearchPath,
+                    initLoader,
+                    blockLegacyApi = module.code.targetApiVersion >= 102,
+                )
+
+            if (
+                moduleClassLoader.loadClass(XposedModule::class.java.name).classLoader !==
+                    initLoader
+            ) {
+                Log.e(TAG, "The Xposed API classes are compiled into ${module.packageName}")
+                return null
+            }
+
+            val context =
+                AevixContext(
+                    packageName = module.packageName,
+                    applicationInfo = module.applicationInfo,
+                    service = module.service,
+                    defaultExceptionMode =
+                        if (module.code.exceptionPassthrough) ExceptionMode.PASSTHROUGH
+                        else ExceptionMode.PROTECTIVE,
+                )
+
             val constructors = mutableListOf<Constructor<*>>()
             for (className in module.code.moduleClassNames) {
                 try {
-                    val clazz = loader.loadClass(className)
-                    Log.v(TAG, "Resolving entry $clazz")
-                    if (!XposedModule::class.java.isAssignableFrom(clazz)) { Log.e(TAG, "Class does not extend XposedModule: $className"); continue }
-                    constructors += clazz.getDeclaredConstructor()
-                } catch (t: Throwable) { Log.e(TAG, "Failed to stage entry class $className", t) }
+                    val entryClass = moduleClassLoader.loadClass(className)
+                    Log.v(TAG, "Resolving entry $entryClass")
+                    if (!XposedModule::class.java.isAssignableFrom(entryClass)) {
+                        Log.e(TAG, "Class does not extend XposedModule: $className")
+                        continue
+                    }
+                    constructors += entryClass.getDeclaredConstructor()
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to stage entry class $className", t)
+                }
             }
-            if (constructors.isEmpty()) { Log.e(TAG, "No entry class could be staged for " + module.packageName); return null }
-            return StagedGeneration(module, isSystemServer, processName, loader, context, constructors)
-        } catch (t: Throwable) { Log.e(TAG, "Fatal error staging module " + module.packageName, t); return null }
-    }
 
+            if (constructors.isEmpty()) {
+                Log.e(TAG, "No entry class could be staged for ${module.packageName}")
+                return null
+            }
+
+            return StagedGeneration(
+                module,
+                isSystemServer,
+                processName,
+                moduleClassLoader,
+                context,
+                constructors,
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "Fatal error staging module ${module.packageName}", t)
+            return null
+        }
+    }
     fun hotReload(
         modulePackageName: String?,
         extras: Bundle?,
