@@ -339,19 +339,27 @@ object FrameworkService : IFrameworkService.Stub() {
     if (ModuleDatabase.systemServerModuleRows().none { it.packageName == packageName }) return null
     val module =
         ConfigCache.state.modules[packageName]?.takeUnless { it.code.legacy } ?: return null
-    info.targetIds.computeIfAbsent(packageName) {
-      val id = nextHotReloadTargetId.getAndIncrement()
-      hotReloadTargets[id] =
-          HotReloadTarget(
-              id,
-              packageName,
-              info.processName,
-              info.key.uid,
-              info.key.pid,
-              loadedVersionCode,
-              hotReloadable,
-          ).apply { mayBackfillVersion = false }
-      id
+    val targetId =
+        info.targetIds.computeIfAbsent(packageName) {
+          val id = nextHotReloadTargetId.getAndIncrement()
+          hotReloadTargets[id] =
+              HotReloadTarget(
+                  id,
+                  packageName,
+                  info.processName,
+                  info.key.uid,
+                  info.key.pid,
+                  loadedVersionCode,
+                  hotReloadable,
+              )
+          id
+        }
+    // The running system_server generation is authoritative during reattachment. This also fixes
+    // a target first recorded before PackageManager was ready, or a same-daemon reconnect where
+    // the process registry survived and the target id was already present.
+    hotReloadTargets[targetId]?.apply {
+      this.loadedVersionCode = loadedVersionCode
+      mayBackfillVersion = false
     }
     return module.service
   }
