@@ -115,18 +115,18 @@ class ModuleAppService(private val loadedModule: LoadedModule) : IXposedService.
      * together with the `SharedMemory` behind each of its preloaded DEX files. [forgetReplacedModules]
      * drops a package's entry when a new generation replaces it.
      */
-    private val serviceMap = ConcurrentHashMap<String, ModuleAppService>()
+    private val serviceCache =
+        ModuleGenerationCache<LoadedModule, ModuleAppService>(
+            packageNameOf = { it.packageName },
+            generationOf = { it.loadedModule },
+            create = ::ModuleAppService,
+        )
 
-    private fun serviceFor(module: LoadedModule): ModuleAppService =
-        serviceMap.compute(module.packageName) { _, current ->
-          current?.takeIf { it.loadedModule === module } ?: ModuleAppService(module)
-        }!!
+    private fun serviceFor(module: LoadedModule): ModuleAppService = serviceCache.serviceFor(module)
 
     /** Drops the service of every package whose current generation is not [modules]' entry. */
     fun forgetReplacedModules(modules: Map<String, LoadedModule>) {
-      serviceMap.entries.removeIf { (packageName, service) ->
-        modules[packageName] !== service.loadedModule
-      }
+      serviceCache.forgetReplacedModules(modules)
     }
 
     /**
