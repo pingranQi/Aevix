@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -97,6 +98,8 @@ fun SystemStatusScreen(
     val context = LocalContext.current
     val statusNotification by viewModel.statusNotification.collectAsStateWithLifecycle()
     val hiddenIcon by viewModel.hiddenIcon.collectAsStateWithLifecycle()
+    val inlineHookInvalidation by viewModel.inlineHookInvalidation.collectAsStateWithLifecycle()
+    var inlineHookPickerOpen by rememberSaveable { mutableStateOf(false) }
     val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
     val presence by viewModel.presence.collectAsStateWithLifecycle()
     val managerInstall by viewModel.managerInstall.collectAsStateWithLifecycle()
@@ -104,7 +107,10 @@ fun SystemStatusScreen(
     // Both the shortcut and the install can be undone from outside the app while it is open —
     // dragged off the home screen, uninstalled from Settings — so what the rows offer is re-read on
     // arrival rather than trusted from whenever the ViewModel was built.
-    LaunchedEffect(Unit) { viewModel.refreshPresence() }
+    LaunchedEffect(Unit) {
+        viewModel.refreshPresence()
+        viewModel.refreshInlineHookInvalidation()
+    }
 
     val sections = buildSections(status, device, context)
     // The same page again, in English, for the clipboard.
@@ -212,6 +218,16 @@ fun SystemStatusScreen(
                 Spacer(Modifier.height(4.dp))
             }
             item {
+                InlineHookInvalidationRow(
+                    state = inlineHookInvalidation,
+                    enabled = daemonAlive,
+                    onClick = {
+                        inlineHookPickerOpen = true
+                        viewModel.refreshInlineHookInvalidation()
+                    },
+                )
+            }
+            item {
                 FrameworkToggle(
                     title = stringResource(R.string.status_notification),
                     subtitle = stringResource(R.string.status_notification_summary),
@@ -262,6 +278,15 @@ fun SystemStatusScreen(
                 }
             }
         }
+    }
+
+    if (inlineHookPickerOpen) {
+        InlineHookInvalidationPicker(
+            state = inlineHookInvalidation,
+            onDismiss = { inlineHookPickerOpen = false },
+            onRetry = viewModel::refreshInlineHookInvalidation,
+            onToggle = viewModel::setInvalidateArtInlineHooks,
+        )
     }
 
     // Success only. A failure stays on the card, where it can still be read by someone who was not
