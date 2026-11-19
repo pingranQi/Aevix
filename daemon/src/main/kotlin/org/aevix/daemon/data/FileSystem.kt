@@ -185,6 +185,7 @@ object FileSystem {
             // A daemon that loses the race exits in a moment anyway, but it closes its own
             // descriptor on the way rather than leave that to the finalizer this method exists
             // not to depend on.
+            Log.w(TAG, "Lock $lockPath is held by another process")
             channel.close()
             return@runCatching false
           }
@@ -196,6 +197,7 @@ object FileSystem {
                   })
           true
         }
+        .onFailure { Log.w(TAG, "Could not lock $lockPath", it) }
         .getOrDefault(false)
   }
 
