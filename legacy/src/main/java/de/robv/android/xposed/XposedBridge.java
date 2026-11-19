@@ -62,7 +62,7 @@ public final class XposedBridge {
 
     public static volatile ClassLoader dummyClassLoader = null;
 
-    public static void initXResources() {
+    public static synchronized void initXResources() {
         if (dummyClassLoader != null) {
             return;
         }
@@ -83,6 +83,8 @@ public final class XposedBridge {
                     // nullability of the result configuration. So we hereby set a dummy
                     // ActivityThread to bypass such a situation.
                     var fake = XposedHelpers.newInstance(ActivityThread.class);
+                    var previous =
+                            XposedHelpers.getStaticObjectField(ActivityThread.class, "sCurrentActivityThread");
                     XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", fake);
                     try {
                         TypedArray ta = res.obtainTypedArray(res.getIdentifier(
@@ -90,7 +92,8 @@ public final class XposedBridge {
                         taClass = ta.getClass();
                         ta.recycle();
                     } finally {
-                        XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", null);
+                        // Late injection may replace a real ActivityThread temporarily; restore it.
+                        XposedHelpers.setStaticObjectField(ActivityThread.class, "sCurrentActivityThread", previous);
                     }
                 }
             } catch (Resources.NotFoundException nfe) {
