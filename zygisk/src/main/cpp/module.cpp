@@ -417,19 +417,14 @@ void AevixModule::postServerSpecialize(const zygisk::ServerSpecializeArgs *args)
     // The real `serial` service is registered by then, and a lookup returning it would be
     // indistinguishable from a successful rendezvous.
     std::string bridgeServiceName = is_late_inject ? "serial_aevix" : "serial";
-    auto system_binder = ipc_bridge.RequestSystemServerBinder(env_, bridgeServiceName);
-    if (!system_binder) {
-        LOGE("Failed to get system server IPC binder. Aborting injection.");
-        SetAllowUnload(true);  // Allow unload on failure.
+    auto manager_binder = ipc_bridge.RequestSystemServerBinder(env_, bridgeServiceName);
+    if (!manager_binder) {
+        LOGE("Failed to complete system server framework handshake. Aborting injection.");
+        SetAllowUnload(true);
         return;
     }
 
-    auto manager_binder =
-        ipc_bridge.RequestManagerBinderFromSystemServer(env_, system_binder.get());
-
-    // Use either the direct manager binder if available,
-    // otherwise proxy through the system binder.
-    jobject effective_binder = manager_binder ? manager_binder.get() : system_binder.get();
+    jobject effective_binder = manager_binder.get();
 
     auto [dex_fd, dex_size, obfs_map] = ipc_bridge.FetchFrameworkDex(env_, effective_binder);
     if (dex_fd < 0) {
