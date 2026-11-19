@@ -71,8 +71,14 @@ object AevixService : IAevixDaemon.Stub() {
       processName: String,
       heartBeat: IBinder
   ): IFrameworkService? {
-    if (Binder.getCallingUid() != 1000) {
+    val callerUid = Binder.getCallingUid()
+    val callerPid = Binder.getCallingPid()
+    if (callerUid != 1000) {
       Log.w(TAG, "Unauthorized attachProcess call")
+      return null
+    }
+    if (callerPid != pid) {
+      Log.w(TAG, "attachProcess pid claim $pid does not match caller $callerPid")
       return null
     }
     if (FrameworkService.hasRegister(uid, pid)) return null
