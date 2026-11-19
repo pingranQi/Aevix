@@ -12,8 +12,8 @@ reload_body = source[start:end]
 assert "if (newModule == null)" in reload_body
 assert "val old =" in reload_body
 assert "generations[packageName]" in reload_body
-assert "buildGeneration(newModule, old.isSystemServer, old.processName)" in reload_body
-assert "?: return unsupported(\"Cannot build a new generation" in reload_body
+assert "stageGeneration(newModule, old.isSystemServer, old.processName)" in reload_body
+assert "?: return unsupported(\"Cannot stage a new generation" in reload_body
 
 # The new generation is published only after the old generation accepted the handoff and the
 # replacement entries were made active. This ordering is the commit point.
