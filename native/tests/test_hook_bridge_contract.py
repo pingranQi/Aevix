@@ -26,7 +26,17 @@ assert "WrapperFor(env, returns)" in source
 assert "env->CallStaticObjectMethodA(wrapper->clazz, wrapper->box, &ret_val)" in source
 
 # Retired hooks with no callbacks should not allocate empty JNI snapshot arrays.
-assert "hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()" in source
+# The fast path belongs to callbackSnapshot (jobjectArray), never hookMethod (jboolean).
+hook_method = source.split("AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, hookMethod", 1)[1].split(
+    "AEVIX_DEF_NATIVE_METHOD(jboolean, HookBridge, unhookMethod", 1
+)[0]
+callback_snapshot = source.split(
+    "AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot", 1
+)[1].split(
+    "AEVIX_DEF_NATIVE_METHOD", 1
+)[0]
+assert "modern_callbacks.empty() && hook_item->legacy_callbacks.empty()" not in hook_method
+assert "hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()) return nullptr;" in callback_snapshot
 
 # JNI exceptions raised while reading or converting an argument abort before invoking the target.
 assert "if (env->ExceptionCheck())" in source
