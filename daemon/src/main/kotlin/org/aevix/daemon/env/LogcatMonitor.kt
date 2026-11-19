@@ -41,11 +41,11 @@ object LogcatMonitor {
     @Synchronized
     fun add(file: File) {
       map[file] = Unit
-      if (map.size > maxEntries) {
+      while (map.size > maxEntries) {
         val eldest = map.keys.first()
-        if (eldest.delete()) {
-          map.remove(eldest)
-        }
+        // Keep the index bounded even when a file is already gone or cannot be deleted now.
+        eldest.delete()
+        map.remove(eldest)
       }
     }
   }
