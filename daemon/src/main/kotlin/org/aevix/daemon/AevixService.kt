@@ -56,8 +56,12 @@ object AevixService : IAevixDaemon.Stub() {
     appThread?.let { SystemContext.appThread = IApplicationThread.Stub.asInterface(it) }
     SystemContext.token = activityToken
 
-    // Initialize OS Observers using Coroutines for the dispatch blocks
-    registerReceivers()
+    // Receiver registration performs Binder calls back into system_server. Do not hold the
+    // system_server transaction that supplied this process's context while making those calls.
+    AevixDaemon.scope.launch {
+      runCatching { registerReceivers() }
+          .onFailure { Log.e(TAG, "Failed to register the OS receivers", it) }
+    }
 
     if (AevixDaemon.startedAfterSystemServer) {
       Log.i(TAG, "Started after system_server. Forcing boot completed event.")
