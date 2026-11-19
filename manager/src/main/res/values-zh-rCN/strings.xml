@@ -429,4 +429,7 @@
     <string name="action_invalidate_art_inline_hooks_enabled">已为 %1$s 启用 ART 内联 Hook 兼容模式。</string>
     <string name="action_invalidate_art_inline_hooks_disabled">已为 %1$s 禁用 ART 内联 Hook 兼容模式。</string>
     <string name="action_invalidate_art_inline_hooks_failed">无法更改 %1$s 的 ART 内联 Hook 兼容模式。</string>
+    <string name="daemon_down_title">Aevix 守护进程未运行</string>
+    <string name="daemon_down_summary">此页面无法从 Aevix 守护进程获取状态，因此下面的框架健康检查尚无结果。请确认 Aevix 模块已安装并在 Root 管理器中启用。如果 Root 实现是在开机后才加载内核模块，本次启动可能跳过了 post-fs-data，导致 Aevix 策略未应用、守护进程未启动。加载模块后执行一次软重启，或使用 Root 管理器重新执行 post-fs-data，然后重新打开此页面。</string>
+    <string name="info_daemon_not_running">—（守护进程未运行）</string>
 </resources>
