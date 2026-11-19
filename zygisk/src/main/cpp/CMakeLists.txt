@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.10)
 
 project(zygisk)
 
+# Prevent the NDK toolchain from re-enabling host-side C++ module scanning in nested projects.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
