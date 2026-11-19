@@ -281,8 +281,14 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             continue;
         }
 
-        const uintptr_t segment_start =
-            static_cast<uintptr_t>(info->dlpi_addr) + static_cast<uintptr_t>(phdr.p_vaddr);
+        const uintptr_t image_base = static_cast<uintptr_t>(info->dlpi_addr);
+        const uintptr_t virtual_address = static_cast<uintptr_t>(phdr.p_vaddr);
+        if (virtual_address > UINTPTR_MAX - image_base) {
+            LOGE("Executable libart segment {} address overflows", i);
+            success = false;
+            continue;
+        }
+        const uintptr_t segment_start = image_base + virtual_address;
         if (segment_size > UINTPTR_MAX - segment_start) {
             LOGE("Executable libart segment {} address range overflows", i);
             success = false;
