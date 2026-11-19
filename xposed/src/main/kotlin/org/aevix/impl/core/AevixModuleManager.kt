@@ -193,13 +193,16 @@ object AevixModuleManager {
         // only: module code never runs inside it.
         synchronized(AevixHookBuilder.lockOf(packageName)) { old.context.freeze() }
 
+        val retiredLoader = WeakReference(old.classLoader)
+        val callbackIsSystemServer = old.isSystemServer
+        val callbackProcessName = old.processName
         var savedState: Any? = null
         val reloadingParam =
             object : HotReloadingParam {
                 override fun getExtras(): Bundle? = extras
 
                 override fun setSavedInstanceState(outState: Any?) {
-                    rejectOldGenerationState(outState, old.classLoader)
+                    retiredLoader.get()?.let { rejectOldGenerationState(outState, it) }
                     savedState = outState
                 }
             }
@@ -236,9 +239,9 @@ object AevixModuleManager {
 
         val reloadedParam =
             object : HotReloadedParam {
-                override fun isSystemServer(): Boolean = old.isSystemServer
+                override fun isSystemServer(): Boolean = callbackIsSystemServer
 
-                override fun getProcessName(): String = old.processName
+                override fun getProcessName(): String = callbackProcessName
 
                 override fun getExtras(): Bundle? = extras
 
@@ -256,12 +259,16 @@ object AevixModuleManager {
 
         var failure: Throwable? = null
         // The default onHotReloaded already unhooks these; doing both would double-unhook.
-        newEntries
-            .filter { AevixLifecycleManager.isActive(it) }
-            .forEach {
-                if (failure != null) return@forEach
-                runCatching { it.onHotReloaded(reloadedParam) }.onFailure { t -> failure = t }
-            }
+        // Retain the retired generation only for the duration of callbacks. Parameters above
+        // capture scalar values/weak references, so a module retaining them cannot pin its loader.
+        synchronized(old) {
+            newEntries
+                .filter { AevixLifecycleManager.isActive(it) }
+                .forEach {
+                    if (failure != null) return@forEach
+                    runCatching { it.onHotReloaded(reloadedParam) }.onFailure { t -> failure = t }
+                }
+        }
 
         // The last framework-owned reference to the old generation goes with this frame: its map
         // entry is gone, its entries are out of activeModules, and oldEntries dies on return.
