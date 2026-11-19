@@ -3,6 +3,7 @@ package org.aevix.daemon.data
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import org.aevix.daemon.BuildConfig
+import org.aevix.daemon.system.*
 import org.apache.commons.lang3.SerializationUtilsX
 
 private const val TAG = "AevixPreferenceStore"
@@ -133,14 +134,28 @@ object PreferenceStore {
     return true
   }
 
-  /** Matches package processes and the synthetic system:ui process; custom component names are not inferred. */
+  /**
+   * Resolve configured package names against actual app/component process names for this Android user.
+   * system_server itself is excluded; the synthetic "system" option only targets system:ui.
+   */
   fun shouldInvalidateArtInlineHookProcess(processName: String, uid: Int): Boolean {
     val configured = getInvalidateArtInlineHookPackages()
     if (configured.isEmpty()) return false
-    if (SYSTEM_UI_VIRTUAL_PACKAGE in configured && uid == android.os.Process.SYSTEM_UID &&
-        processName == SYSTEM_UI_PROCESS) return true
-    return configured.any { pkg ->
-      pkg != SYSTEM_UI_VIRTUAL_PACKAGE && (processName == pkg || processName.startsWith("$pkg:"))
+    if (InlineHookProcessPolicy.matchesSystemUiVirtualPackage(configured, processName, uid)) {
+      return true
+    }
+    val userId = uid / PER_USER_RANGE
+    return configured.any { packageName ->
+      if (packageName == SYSTEM_UI_VIRTUAL_PACKAGE) return@any false
+      val info = packageManager?.getPackageInfoWithComponents(packageName, MATCH_ALL_FLAGS, userId)
+          ?: return@any false
+      val appInfo = info.applicationInfo ?: return@any false
+      InlineHookProcessPolicy.matchesPackage(
+          expectedUid = appInfo.uid,
+          actualUid = uid,
+          processName = processName,
+          applicationProcessName = appInfo.processName,
+          componentProcesses = info.fetchProcesses())
     }
   }
 }
