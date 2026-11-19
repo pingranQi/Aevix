@@ -72,25 +72,29 @@ class AevixModuleClassLoader : ByteBufferDexClassLoader {
             )
         }
 
-        findLoadedClass(name)?.let {
-            return it
-        }
+        // This override replaces ClassLoader.loadClass's synchronization. Serialize the
+        // find/define sequence so two threads cannot define the same module class concurrently.
+        synchronized(this) {
+            findLoadedClass(name)?.let {
+                return it
+            }
 
-        try {
-            return Any::class.java.classLoader!!.loadClass(name)
-        } catch (ignored: ClassNotFoundException) {}
+            try {
+                return Any::class.java.classLoader!!.loadClass(name)
+            } catch (ignored: ClassNotFoundException) {}
 
-        var fromSuper: ClassNotFoundException? = null
-        try {
-            return findClass(name)
-        } catch (ex: ClassNotFoundException) {
-            fromSuper = ex
-        }
+            var fromSuper: ClassNotFoundException? = null
+            try {
+                return findClass(name)
+            } catch (ex: ClassNotFoundException) {
+                fromSuper = ex
+            }
 
-        try {
-            return parent?.loadClass(name) ?: throw fromSuper
-        } catch (cnfe: ClassNotFoundException) {
-            throw fromSuper
+            try {
+                return parent?.loadClass(name) ?: throw fromSuper
+            } catch (cnfe: ClassNotFoundException) {
+                throw fromSuper
+            }
         }
     }
 
