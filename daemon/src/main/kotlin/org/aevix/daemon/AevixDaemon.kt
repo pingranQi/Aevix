@@ -249,9 +249,8 @@ object AevixDaemon {
                   // looks us up under `serial`, which its predecessor has just freed by dying,
                   // and it broadcasts a boot of its own that there is no need to replay.
                   startedAfterSystemServer = false
-                  // And the question of whether a module reached system_server is about the one
-                  // ahead of us, not the one that died with ours inside it.
-                  SystemServerService.systemServerRequested = false
+                  // The replacement daemon owns a fresh process registry, so the live-registration
+                  // query naturally starts false until system_server reattaches.
                   // Re-claim the service name immediately to ensure that when system_server
                   // restarts, our proxy is already there for the Zygisk module to find.
                   SystemServerService.registerProxyService(proxyServiceName)
