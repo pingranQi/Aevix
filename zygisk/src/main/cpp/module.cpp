@@ -7,6 +7,8 @@
 #include <elf/symbol_cache.h>
 #include <jni/jni_bridge.h>
 #include <sys/system_properties.h>
+
+#include <cstring>
 #include <unistd.h>
 
 #include <zygisk.hpp>
@@ -21,10 +23,10 @@ void ConfigureInlineHookBackendFromSystemProperty() {
     const bool use_shadowhook =
         length > 0 && (std::strcmp(value, "shadowhook") == 0 || std::strcmp(value, "1") == 0);
 #if defined(__aarch64__) || defined(__arm__)
-    SetInlineHookBackend(use_shadowhook ? kInlineHookBackendShadowHook : kInlineHookBackendDobby);
+    vector::native::SetInlineHookBackend(use_shadowhook ? vector::native::kInlineHookBackendShadowHook : vector::native::kInlineHookBackendDobby);
 #else
     (void)use_shadowhook;
-    SetInlineHookBackend(kInlineHookBackendDobby);
+    vector::native::SetInlineHookBackend(vector::native::kInlineHookBackendDobby);
 #endif
 }
 }  // namespace
