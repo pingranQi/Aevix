@@ -379,8 +379,10 @@ object ModuleDatabase {
     val db = dbHelper.writableDatabase
     val mid =
         db.compileStatement("SELECT mid FROM modules WHERE module_pkg_name = ?")
-            .apply { bindString(1, packageName) }
-            .simpleQueryForLong()
+            .use { statement ->
+              statement.bindString(1, packageName)
+              statement.simpleQueryForLong()
+            }
     db.delete(
         "scope",
         "mid = ? AND app_pkg_name = ? AND user_id = ?",
