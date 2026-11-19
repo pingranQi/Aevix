@@ -165,6 +165,13 @@ object AevixDaemon {
           ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
     }
 
+    // Warm the module cache while this process still has root. Fork-time Binder calls then find
+    // it ready, rather than making system_server wait for APK and database I/O.
+    ConfigCache.warmUp()
+    if (!ConfigCache.awaitReady(1200L)) {
+      Log.w(TAG, "Module cache is not ready yet; continuing without it")
+    }
+
     // Setup IPC channel for applications by injecting DaemonService binder
     sendToBridge(AevixService.asBinder(), false)
 
