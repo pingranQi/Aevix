@@ -5,10 +5,12 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.IBinder.DeathRecipient
 import android.os.Parcel
+import android.os.Process
 import hidden.HiddenApiBridge.Binder_allowBlocking
 import hidden.HiddenApiBridge.Context_getActivityToken
 import org.aevix.ipc.IAevixDaemon
 import org.aevix.util.Log
+import org.aevix.impl.core.AevixServiceClient
 
 /**
  * Manages manual Binder transactions for the Aevix framework.
@@ -28,59 +30,68 @@ object BridgeService {
         GET_BINDER, // Process requesting its specific application service
     }
 
-    @Volatile private var serviceBinder: IBinder? = null
+    private class Connection(val binder: IBinder) : DeathRecipient {
+        val service: IAevixDaemon = IAevixDaemon.Stub.asInterface(binder)
 
-    @Volatile private var service: IAevixDaemon? = null
+        override fun binderDied() {
+            synchronized(BridgeService) {
+                if (connection === this) connection = null
+            }
+            unlink()
+        }
 
-    /** Cleans up service references if the remote Aevix daemon crashes. */
-    private val serviceRecipient: DeathRecipient = DeathRecipient {
-        Log.e(TAG, "Aevix daemin service died.")
-        serviceBinder?.unlinkToDeath(this.serviceRecipient, 0)
-        serviceBinder = null
-        service = null
+        fun unlink() {
+            runCatching { binder.unlinkToDeath(this, 0) }
+        }
     }
 
-    /** Returns the active Aevix daemin service interface. */
-    @JvmStatic fun getService(): IAevixDaemon? = service
+    @Volatile private var connection: Connection? = null
+    private val connectedService: IAevixDaemon?
+        get() = connection?.service
+    private val systemServerLifeToken = Binder()
 
-    /**
-     * Initializes the client-side connection to the Aevix daemin service.
-     *
-     * @param binder The raw binder for [IAevixDaemon].
-     */
-    private fun receiveFromBridge(binder: IBinder?) {
+    @JvmStatic fun getService(): IAevixDaemon? = connectedService
+
+    @Synchronized
+    private fun receiveFromBridge(binder: IBinder?): Boolean {
         if (binder == null) {
             Log.e(TAG, "Received null binder from bridge.")
-            return
+            return false
         }
-
-        // Cleanup old death recipient if we are re-initializing
         val token = Binder.clearCallingIdentity()
+        val next = Connection(Binder_allowBlocking(binder))
         try {
-            serviceBinder?.unlinkToDeath(serviceRecipient, 0)
+            if (connection?.binder == next.binder && binder.isBinderAlive) return true
+            next.binder.linkToDeath(next, 0)
+            val framework =
+                next.service.attachProcess(
+                    Process.myUid(),
+                    Process.myPid(),
+                    "system",
+                    systemServerLifeToken,
+                ) ?: return false
+            if (!AevixServiceClient.reconnectSystemServer(framework, next.service)) return false
+
+            val activityThread = ActivityThread.currentActivityThread()
+            val appThread = activityThread.applicationThread as android.app.IApplicationThread
+            val systemContext = activityThread.systemContext
+            next.service.dispatchSystemServerContext(
+                appThread.asBinder(),
+                Context_getActivityToken(systemContext),
+            )
+            check(next.binder.isBinderAlive) { "Daemon died during system server reattachment" }
+            val previous = connection
+            connection = next
+            previous?.unlink()
+            Log.i(TAG, "Aevix daemon binder linked; system_server registered.")
+            return true
+        } catch (failure: Throwable) {
+            Log.e(TAG, "Cannot reattach system_server to Aevix daemon", failure)
+            return false
         } finally {
+            if (connection !== next) next.unlink()
             Binder.restoreCallingIdentity(token)
         }
-
-        // Allow blocking calls since we are often in a synchronous fork path
-        val blockingBinder = Binder_allowBlocking(binder)
-        serviceBinder = blockingBinder
-        service = IAevixDaemon.Stub.asInterface(blockingBinder)
-
-        runCatching { blockingBinder.linkToDeath(serviceRecipient, 0) }
-            .onFailure { Log.e(TAG, "Failed to link to service death", it) }
-
-        // Provide the system context to the service so it can manage system-wide states
-        runCatching {
-                val activityThread = ActivityThread.currentActivityThread()
-                val at = activityThread.applicationThread as android.app.IApplicationThread
-                val atBinder = at.asBinder()
-                val systemCtx = activityThread.systemContext
-                service?.dispatchSystemServerContext(atBinder, Context_getActivityToken(systemCtx))
-            }
-            .onFailure { Log.e(TAG, "Failed to dispatch system context", it) }
-
-        Log.i(TAG, "Aevix daemin service binder linked.")
     }
 
     /** Handles manual parcel transactions. Called via reflection/JNI from the native hook. */
@@ -96,9 +107,9 @@ object BridgeService {
                 Action.SEND_BINDER -> {
                     // Only allow root (UID 0) to push the initial service binder
                     if (Binder.getCallingUid() == 0) {
-                        receiveFromBridge(data.readStrongBinder())
+                        val attached = receiveFromBridge(data.readStrongBinder())
                         reply?.writeNoException()
-                        true
+                        attached
                     } else false
                 }
 
@@ -106,7 +117,7 @@ object BridgeService {
                     val processName = data.readString()
                     val heartBeat = data.readStrongBinder()
                     val appService =
-                        service?.attachProcess(
+                        connectedService?.attachProcess(
                             Binder.getCallingUid(),
                             Binder.getCallingPid(),
                             processName,
