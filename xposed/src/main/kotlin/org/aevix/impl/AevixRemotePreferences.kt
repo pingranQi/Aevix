@@ -21,65 +21,105 @@ private inline fun <reified T> Bundle.getSerializableCompat(key: String): T? {
 }
 
 @Suppress("UNCHECKED_CAST")
-internal class AevixRemotePreferences(service: IModuleService, group: String) :
+internal class AevixRemotePreferences(service: IModuleService, private val group: String) :
     SharedPreferences {
 
     private val map = ConcurrentHashMap<String, Any>()
     private val listeners = mutableSetOf<SharedPreferences.OnSharedPreferenceChangeListener>()
+    private val subscriptionLock = Any()
+    private var subscription: Subscription? = null
 
-    private val callback =
-        object : IRemotePreferenceCallback.Stub() {
-            @Synchronized
-            override fun onRemotePreferencesChanged(bundle: Bundle) {
-                val changes = ArraySet<String>()
+    private inner class Subscription(val binder: android.os.IBinder) :
+        IRemotePreferenceCallback.Stub() {
+        var ready = false
+        val pending = ArrayList<Bundle>()
 
-                // Sent for edit().clear() and for deleteRemotePreferences. Without this the cache
-                // keeps serving values the module app already removed.
-                if (bundle.getBoolean("clear", false)) {
-                    changes.addAll(map.keys)
-                    map.clear()
-                }
-
-                if (bundle.containsKey("delete")) {
-                    val deletes =
-                        bundle.getSerializableCompat<Set<String>>("delete") as? Set<String>
-                    if (deletes != null) {
-                        changes.addAll(deletes)
-                        for (key in deletes) {
-                            map.remove(key)
-                        }
+        override fun onRemotePreferencesChanged(bundle: Bundle) {
+            val changes =
+                synchronized(subscriptionLock) {
+                    if (subscription !== this) return
+                    if (!ready) {
+                        pending.add(Bundle(bundle))
+                        return
                     }
+                    applyChanges(bundle)
                 }
+            notifyChanges(changes)
+        }
+    }
 
-                if (bundle.containsKey("put")) {
-                    val puts =
-                        bundle.getSerializableCompat<Map<String, Any>>("put") as? Map<String, Any>
-                    if (puts != null) {
-                        map.putAll(puts)
-                        changes.addAll(puts.keys)
-                    }
-                }
-
-                synchronized(listeners) {
-                    for (key in changes) {
-                        listeners.forEach { listener ->
-                            listener.onSharedPreferenceChanged(this@AevixRemotePreferences, key)
-                        }
-                    }
-                }
+    private fun applyChanges(bundle: Bundle): Set<String> {
+        val changes = ArraySet<String>()
+        if (bundle.getBoolean("clear", false)) {
+            changes.addAll(map.keys)
+            map.clear()
+        }
+        if (bundle.containsKey("delete")) {
+            val deletes = bundle.getSerializableCompat<Set<String>>("delete") as? Set<String>
+            if (deletes != null) {
+                changes.addAll(deletes)
+                deletes.forEach { map.remove(it) }
             }
         }
+        if (bundle.containsKey("put")) {
+            val puts = bundle.getSerializableCompat<Map<String, Any>>("put") as? Map<String, Any>
+            if (puts != null) {
+                map.putAll(puts)
+                changes.addAll(puts.keys)
+            }
+        }
+        return changes
+    }
+
+    private fun notifyChanges(changes: Set<String>) {
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (key in changes) {
+            snapshot.forEach { listener ->
+                listener.onSharedPreferenceChanged(this, key)
+            }
+        }
+    }
+
+    internal fun reconnect(replacement: IModuleService) {
+        val next = Subscription(checkNotNull(replacement.asBinder()))
+        val previous =
+            synchronized(subscriptionLock) {
+                val old = subscription
+                if (old?.binder == next.binder && old.ready) return
+                subscription = next
+                old
+            }
+        val changes =
+            try {
+                val output = replacement.requestRemotePreferences(group, next)
+                synchronized(subscriptionLock) {
+                    if (subscription !== next) return
+                    val before = HashMap(map)
+                    val initial =
+                        output.getSerializableCompat<Map<String, Any>>("map").orEmpty()
+                    map.clear()
+                    map.putAll(initial)
+                    // Updates received during the initial snapshot are applied after that snapshot.
+                    next.pending.forEach { applyChanges(it) }
+                    next.pending.clear()
+                    next.ready = true
+                    (before.keys + map.keys).filterTo(mutableSetOf()) { before[it] != map[it] }
+                }
+            } catch (failure: Throwable) {
+                synchronized(subscriptionLock) {
+                    if (subscription === next) subscription = previous
+                }
+                throw failure
+            }
+        runCatching { notifyChanges(changes) }
+            .onFailure {
+                Log.e("AevixContext", "Remote preference listener failed for $group", it)
+            }
+    }
 
     init {
         try {
-            val output = service.requestRemotePreferences(group, callback)
-            if (output.containsKey("map")) {
-                val initialMap =
-                    output.getSerializableCompat<Map<String, Any>>("map") as? Map<String, Any>
-                if (initialMap != null) {
-                    map.putAll(initialMap)
-                }
-            }
+            reconnect(service)
         } catch (e: RemoteException) {
             Log.e("AevixContext", "Failed to request remote preferences for group: $group", e)
             throw XposedFrameworkError("Remote preferences IPC failure", e)
