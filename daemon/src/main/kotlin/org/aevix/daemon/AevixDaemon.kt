@@ -83,7 +83,12 @@ object AevixDaemon {
 
   @JvmStatic
   fun main(args: Array<String>) {
-    if (!FileSystem.tryLock()) kotlin.system.exitProcess(0)
+    // The daemon's own log is not opened until later in main, so a start that stops here must
+    // leave an explanation somewhere the manager can retrieve.
+    if (!FileSystem.tryLock()) {
+      Log.w(TAG, "Could not acquire the daemon lock; exiting")
+      kotlin.system.exitProcess(0)
+    }
 
     // `activity` is system_server's own, registered long after the specialization in which the
     // module comes looking for us, so at boot nothing answers it and a binder there means someone
