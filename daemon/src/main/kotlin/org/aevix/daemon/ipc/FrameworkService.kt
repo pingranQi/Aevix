@@ -319,6 +319,11 @@ object FrameworkService : IFrameworkService.Stub() {
         it.key.uid == Process.SYSTEM_UID && it.processName == "system" && it.heartBeat.isBinderAlive
       }
 
+  fun isSystemServerRegistered(pid: Int): Boolean =
+      processes[ProcessKey(Process.SYSTEM_UID, pid)]?.let {
+        it.processName == "system" && it.heartBeat.isBinderAlive
+      } == true
+
   fun reconnectSystemModule(
       packageName: String,
       loadedVersionCode: Long,
