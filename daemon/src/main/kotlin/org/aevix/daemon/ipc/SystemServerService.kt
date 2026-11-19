@@ -108,11 +108,9 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
     // Register as the service name early to setup an IPC for `system_server`.
     Log.d(TAG, "Registering bridge service for `system_server` with name `$serviceName`.")
 
-    // `IServiceManager.registerForNotifications` is only available since Android R.
-    // On older platforms we simply let the real service replace our proxy in servicemanager.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      ServiceRegistrationWatcher.watch(serviceName)
-    }
+    // `IServiceManager.registerForNotifications` is what tells us the real service arrived, so
+    // the watcher is what `onTransact` forwards through once it has.
+    ServiceRegistrationWatcher.watch(serviceName)
 
     // The Zygisk module polls this name during `system_server` specialization,
     // so it must be claimed on every supported platform.
@@ -128,11 +126,9 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
    * it; see [ServiceRegistrationWatcher.unregisterWhenUnused] for why it cannot simply be asked.
    *
    * Worth arranging because the name invented for a late injection is ours alone, so unlike
-   * `serial` nothing will ever come along and replace it. Android R and later; older
-   * servicemanagers offer no way to take a name back, and there it stays registered.
+   * `serial` nothing will ever come along and replace it.
    */
   fun unregisterProxyService() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
     val name = proxyServiceName ?: return
     ServiceRegistrationWatcher.unregisterWhenUnused(name, this)
   }
@@ -153,12 +149,24 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
    * system_server. Only ever called from [onTransact] below.
    */
   private fun attachProcess(
-      uid: Int,
-      pid: Int,
+      claimedUid: Int,
+      claimedPid: Int,
       processName: String,
       processLifeToken: IBinder?
   ): IFrameworkService? {
+    // The uid and pid in the parcel are whatever the caller wrote. `AevixService.attachProcess`
+    // has always checked `Binder.getCallingUid()` first; this path did not, so any process that
+    // could reach this binder could ask to be registered as system_server — and `registerHeartBeat`
+    // records the pair it is given, which means the entry lands in `processes` under a key the
+    // caller chose. It would not pass `ensureRegistered`, which re-reads the real identity, but it
+    // would displace a real registration if it named one, and the map would grow with every call.
+    val uid = Binder.getCallingUid()
+    val pid = Binder.getCallingPid()
     if (uid != 1000 || processLifeToken == null || processName != "system") return null
+    if (claimedUid != uid || claimedPid != pid) {
+      Log.w(TAG, "Bridge claimed $claimedUid/$claimedPid but the transaction is from $uid/$pid")
+      return null
+    }
 
     // Latched only once the registration has actually succeeded, not on the way in. It used to be
     // set immediately after the gate above, so a registration that then failed — registerHeartBeat

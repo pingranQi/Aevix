@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.10)
 
 project(external)
 
+# CMake 3.28 and later scan for C++ modules by default from C++20 on, and for the standard library
+# it runs clang-scan-deps against the *host's* libstdc++ sources -- /usr/include/c++/15/bits/std.cc
+# on the CI image. The sysroot is the NDK's, which has no such file, so the scan fails with
+# "fatal error: 'bits/stdc++.h' file not found" and takes the whole build down.
+#
+# Nothing here imports a module, so the scan has nothing to find. It only ever passed before
+# because ccache still held the result from a configuration where VERSION_CODE had not changed;
+# a clean build fails every time.
+# A plain directory-scoped `set()` does not reach add_subdirectory() targets that call
+# project() again (lsplant does), and the NDK 30 toolchain re-seeds the cache value after
+# Gradle's -D argument. CACHE + FORCE is the only form that wins in every subdirectory.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 set(CMAKE_CXX_STANDARD 23)
 
 set(XZ_SOURCES

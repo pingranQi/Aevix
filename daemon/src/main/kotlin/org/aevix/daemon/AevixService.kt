@@ -37,14 +37,9 @@ object AevixService : IAevixDaemon.Stub() {
    * What the dialer broadcasts when a secret code is entered, which changed name in Q.
    *
    * The pre-Q action is spelled out rather than taken from `Telephony.Sms.Intents`, whose constant
-   * only became public API in 28 while this daemon runs from 27. It is the same string either way:
-   * on 8.1 the platform broadcast it from the hidden `TelephonyIntents.SECRET_CODE_ACTION`, which
-   * carries exactly this value, and the public constant that followed was deprecated in 29 when
-   * `TelephonyManager.ACTION_SECRET_CODE` replaced it.
+   * `TelephonyManager.ACTION_SECRET_CODE` is public from API 29 and this daemon runs from 34.
    */
-  private val ACTION_SECRET_CODE =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) TelephonyManager.ACTION_SECRET_CODE
-      else "android.provider.Telephony.SECRET_CODE"
+  private val ACTION_SECRET_CODE = TelephonyManager.ACTION_SECRET_CODE
 
   /** Dial *#*#23849#*#* ("AEVIX" on the keypad) to open the manager. */
   private const val SECRET_CODE = "23849"
@@ -56,8 +51,18 @@ object AevixService : IAevixDaemon.Stub() {
     appThread?.let { SystemContext.appThread = IApplicationThread.Stub.asInterface(it) }
     SystemContext.token = activityToken
 
-    // Initialize OS Observers using Coroutines for the dispatch blocks
-    registerReceivers()
+    // Registration is nine binder calls into this very system_server, made on a transaction that
+    // system_server is itself blocked in: it hands us its context and waits for the answer. Eight of
+    // the nine ask ActivityManagerService or the UID observer registry, both of which answer on a
+    // binder thread system_server has to find first. Doing that here therefore has a failure mode
+    // with no good ending -- a full binder pool turns the wait into the watchdog.
+    //
+    // Nothing reads one of these receivers during a fork, so the transaction does not have to
+    // finish before they exist. Off it goes.
+    AevixDaemon.scope.launch {
+      runCatching { registerReceivers() }
+          .onFailure { Log.e(TAG, "Failed to register the OS receivers", it) }
+    }
 
     if (AevixDaemon.startedAfterSystemServer) {
       Log.i(TAG, "Started after system_server. Forcing boot completed event.")
@@ -71,8 +76,16 @@ object AevixService : IAevixDaemon.Stub() {
       processName: String,
       heartBeat: IBinder
   ): IFrameworkService? {
-    if (Binder.getCallingUid() != 1000) {
+    // The gate is the kernel's answer, not the parcel's. The arguments are still read by the
+    // caller and are still used below, so they are checked against it rather than trusted.
+    val callerUid = Binder.getCallingUid()
+    val callerPid = Binder.getCallingPid()
+    if (callerUid != 1000) {
       Log.w(TAG, "Unauthorized attachProcess call")
+      return null
+    }
+    if (callerPid != pid) {
+      Log.w(TAG, "attachProcess pid $pid claimed by $callerPid; ignoring the claim")
       return null
     }
     if (FrameworkService.hasRegister(uid, pid)) return null
@@ -117,13 +130,8 @@ object AevixService : IAevixDaemon.Stub() {
           if (!ordered && intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
           runCatching {
                 val appThread = SystemContext.appThread
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                  activityManager?.finishReceiver(
-                      appThread?.asBinder(), resultCode, data, extras, false, intent.flags)
-                } else {
-                  activityManager?.finishReceiver(
-                      this, resultCode, data, extras, false, intent.flags)
-                }
+                activityManager?.finishReceiver(
+                    appThread?.asBinder(), resultCode, data, extras, false, intent.flags)
               }
               .onFailure { Log.e(TAG, "finishReceiver failed", it) }
         }
