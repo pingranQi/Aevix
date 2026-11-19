@@ -124,6 +124,7 @@ abstract class PrepareFrameworkDex : DefaultTask() {
     @TaskAction
     fun prepare() {
         val output = outputFile.get().asFile
+        check(!output.exists() || output.delete()) { "Cannot remove previous framework DEX: $output" }
         val apks = apkDirectory.get().asFile.listFiles { it.extension == "apk" }.orEmpty()
         check(apks.size == 1) { "Expected one framework APK, found " + apks.size }
 
