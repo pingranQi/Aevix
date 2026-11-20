@@ -242,8 +242,8 @@ object FileSystem {
     @Suppress("DEPRECATION") Resources(am, null, null)
   }
 
-  /** Copy exactly the expected DEX bytes, rejecting truncation and trailing data. */
-internal fun copyExactly(inputStream: InputStream, destination: ByteBuffer) {
+    /** Copy exactly the expected DEX bytes, rejecting truncation and trailing data. */
+  internal fun copyExactly(inputStream: InputStream, destination: ByteBuffer) {
   val scratch = ByteArray(minOf(8192, destination.remaining()))
   while (destination.hasRemaining()) {
     val count = inputStream.read(scratch, 0, minOf(scratch.size, destination.remaining()))
@@ -262,8 +262,8 @@ internal fun copyExactly(inputStream: InputStream, destination: ByteBuffer) {
   }
 }
 
-/** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
-private fun readDex(
+  /** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
+  private fun readDex(
     inputStream: InputStream,
     expectedSize: Long,
     obfuscate: Boolean,

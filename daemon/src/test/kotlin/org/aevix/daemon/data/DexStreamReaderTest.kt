@@ -24,11 +24,11 @@ class DexStreamReaderTest {
 
   @Test(expected = EOFException::class)
   fun rejectsTruncatedDexEntries() {
-    copyExactly(ByteArrayInputStream(byteArrayOf(1, 2)), ByteBuffer.allocate(3))
+    FileSystem.copyExactly(ByteArrayInputStream(byteArrayOf(1, 2)), ByteBuffer.allocate(3))
   }
 
   @Test(expected = IOException::class)
   fun rejectsDexEntriesLongerThanTheirDeclaredSize() {
-    copyExactly(ByteArrayInputStream(byteArrayOf(1, 2, 3)), ByteBuffer.allocate(2))
+    FileSystem.copyExactly(ByteArrayInputStream(byteArrayOf(1, 2, 3)), ByteBuffer.allocate(2))
   }
 }

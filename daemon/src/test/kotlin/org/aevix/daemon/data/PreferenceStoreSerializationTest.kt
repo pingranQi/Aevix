@@ -11,7 +11,7 @@ class PreferenceStoreSerializationTest {
 
   @Test
   fun supportedPreferenceValuesRoundTrip() {
-    val values = listOf("value", true, 42, 9L, 1.5f, setOf("one", "two"))
+    val values = listOf("value", true, 42, 9L, 1.5f, emptySet<String>(), setOf("one"), setOf("one", "two"))
     values.forEach { value ->
       assertEquals(value, deserializePreferenceValue(serializePreferenceValue(value)))
     }
