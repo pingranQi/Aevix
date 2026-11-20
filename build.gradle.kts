@@ -289,6 +289,7 @@ subprojects {
             // nested projects such as LSPlant call project() and can re-seed the cache option.
             defaultConfig.externalNativeBuild.cmake {
                 arguments.add("-DCMAKE_CXX_SCAN_FOR_MODULES=OFF")
+                arguments.add("-DCMAKE_CXX_MODULE_STD=OFF")
             }
 
             defaultConfig.apply {
