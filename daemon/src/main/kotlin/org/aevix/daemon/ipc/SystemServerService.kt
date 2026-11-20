@@ -153,12 +153,19 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
    * system_server. Only ever called from [onTransact] below.
    */
   private fun attachProcess(
-      uid: Int,
-      pid: Int,
+      claimedUid: Int,
+      claimedPid: Int,
       processName: String,
       processLifeToken: IBinder?
   ): IFrameworkService? {
+    // Never trust uid/pid supplied in the Parcel as the caller's identity.
+    val uid = Binder.getCallingUid()
+    val pid = Binder.getCallingPid()
     if (uid != 1000 || processLifeToken == null || processName != "system") return null
+    if (claimedUid != uid || claimedPid != pid) {
+      Log.w(TAG, "Bridge claimed $claimedUid/$claimedPid but Binder reports $uid/$pid")
+      return null
+    }
 
     // Latched only once the registration has actually succeeded, not on the way in. It used to be
     // set immediately after the gate above, so a registration that then failed — registerHeartBeat

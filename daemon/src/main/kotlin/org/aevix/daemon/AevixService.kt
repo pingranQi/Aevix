@@ -71,8 +71,15 @@ object AevixService : IAevixDaemon.Stub() {
       processName: String,
       heartBeat: IBinder
   ): IFrameworkService? {
-    if (Binder.getCallingUid() != 1000) {
-      Log.w(TAG, "Unauthorized attachProcess call")
+    // Authenticate against the kernel identity; parcel arguments are caller-controlled.
+    val callerUid = Binder.getCallingUid()
+    val callerPid = Binder.getCallingPid()
+    if (callerUid != 1000) {
+      Log.w(TAG, "Unauthorized attachProcess call from uid=$callerUid")
+      return null
+    }
+    if (callerPid != pid) {
+      Log.w(TAG, "attachProcess pid $pid does not match caller pid $callerPid")
       return null
     }
     if (FrameworkService.hasRegister(uid, pid)) return null
