@@ -25,7 +25,17 @@ option(FMT_INSTALL OFF)
 
 add_subdirectory(dobby)
 add_subdirectory(fmt)
+
+# CMake initializes CXX_MODULE_STD on each target at target creation time.
+# Disable import-std before creating LSPlant targets; changing the target
+# property after add_subdirectory() is too late for CMake's synthesized std
+# module dependency. Keep CXX_SCAN_FOR_MODULES enabled for LSPlant's own
+# CXX_MODULES file sets.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
+	set(CMAKE_CXX_MODULE_STD OFF)
+endif()
 add_subdirectory(lsplant/lsplant/src/main/jni)
+
 target_compile_options(lsplant_static PUBLIC -Wno-gnu-anonymous-struct
 	# lsplant.cc's `operator""_uarr()` is a string literal operator template, which is a GNU
 	# extension clang warns about under -Wpedantic. Upstream code we do not own, and the
