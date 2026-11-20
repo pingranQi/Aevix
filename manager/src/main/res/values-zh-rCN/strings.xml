@@ -424,4 +424,9 @@
     <string name="action_install_other_user_prompt_app">选择要为其安装此应用的用户。</string>
     <string name="action_installed_other_user">已为 %1$s 安装。</string>
     <string name="action_install_other_user_failed">无法为 %1$s 安装。</string>
+    <string name="action_invalidate_art_inline_hooks">ART 内联 HOOK 兼容模式</string>
+    <string name="action_invalidate_art_inline_hooks_summary">在每个选中的应用中全局使 Aevix 的 ART 内联 HOOK 失效，不受作用于该应用的模块或 HOOK 数量影响。某些模块可能停止工作，应用也可能出现异常或崩溃。每个应用下次启动时生效。</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">已为 %1$s 启用 ART 内联 HOOK 兼容模式。</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">已为 %1$s 禁用 ART 内联 HOOK 兼容模式。</string>
+    <string name="action_invalidate_art_inline_hooks_failed">无法更改 %1$s 的 ART 内联 HOOK 兼容模式。</string>
 </resources>
