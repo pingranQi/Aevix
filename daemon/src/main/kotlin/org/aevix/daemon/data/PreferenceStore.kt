@@ -24,6 +24,7 @@ private val allowedPreferenceClasses =
         "java.lang.Number",
         "java.lang.String",
         "java.util.Collections\$EmptySet",
+        "kotlin.collections.EmptySet",
         "java.util.Collections\$SingletonSet",
         "java.util.HashSet",
         "java.util.LinkedHashSet",
