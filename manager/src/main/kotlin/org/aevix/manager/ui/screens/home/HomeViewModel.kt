@@ -219,6 +219,9 @@ class HomeViewModel(
     private val _apiProtectionEnabled = MutableStateFlow(false)
     val apiProtectionEnabled: StateFlow<Boolean> = _apiProtectionEnabled.asStateFlow()
 
+    private val _inlineHookBackend = MutableStateFlow(IManagerService.INLINE_HOOK_BACKEND_DOBBY)
+    val inlineHookBackend: StateFlow<Int> = _inlineHookBackend.asStateFlow()
+
     /**
      * How this manager can be opened, and how it currently is.
      *
@@ -560,6 +563,9 @@ class HomeViewModel(
             .isApiProtectionEnabled()
             .onSuccess { _apiProtectionEnabled.value = it }
             .onFailure { e -> logW("status: API protection toggle unread", e) }
+        daemon.getInlineHookBackend()
+            .onSuccess { _inlineHookBackend.value = it }
+            .onFailure { e -> logW("status: inline-hook backend unread", e) }
     }
 
     fun setStatusNotification(enabled: Boolean) {
@@ -590,6 +596,16 @@ class HomeViewModel(
                 // so a transaction that arrived is not yet a setting that changed.
                 _hiddenIcon.value = daemon.isForcedLauncherIcons().getOrDefault(force)
             }
+        }
+    }
+
+    fun setInlineHookBackend(backend: Int) {
+        if (backend != IManagerService.INLINE_HOOK_BACKEND_DOBBY &&
+            backend != IManagerService.INLINE_HOOK_BACKEND_SHADOWHOOK) return
+        viewModelScope.launch {
+            daemon.setInlineHookBackend(backend).onSuccess {
+                _inlineHookBackend.value = daemon.getInlineHookBackend().getOrDefault(backend)
+            }.onFailure { e -> logE("framework: setting inline-hook backend failed", e) }
         }
     }
 

@@ -3,6 +3,7 @@ package org.aevix.manager.ui.screens.home
 import android.os.Build
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,8 @@ import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,6 +101,7 @@ fun SystemStatusScreen(
     val statusNotification by viewModel.statusNotification.collectAsStateWithLifecycle()
     val hiddenIcon by viewModel.hiddenIcon.collectAsStateWithLifecycle()
     val apiProtectionEnabled by viewModel.apiProtectionEnabled.collectAsStateWithLifecycle()
+    val inlineHookBackend by viewModel.inlineHookBackend.collectAsStateWithLifecycle()
     val presence by viewModel.presence.collectAsStateWithLifecycle()
     val managerInstall by viewModel.managerInstall.collectAsStateWithLifecycle()
 
@@ -210,6 +214,10 @@ fun SystemStatusScreen(
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(4.dp))
+            }
+            item {
+                InlineHookBackendRow(backend = inlineHookBackend, enabled = daemonAlive,
+                    onSelect = viewModel::setInlineHookBackend)
             }
             item {
                 FrameworkToggle(
@@ -854,6 +862,32 @@ private fun dex2oatLabel(context: Context, state: Int): String =
         }
     )
 
+@Composable
+private fun InlineHookBackendRow(backend: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val supported = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" || it == "armeabi-v7a" }
+    val selected = stringResource(if (backend == IManagerService.INLINE_HOOK_BACKEND_SHADOWHOOK)
+        R.string.inline_hook_backend_shadowhook else R.string.inline_hook_backend_dobby)
+    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.inline_hook_backend_title), style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.inline_hook_backend_summary), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Box {
+            TextButton(enabled = enabled, onClick = { expanded = true }) { Text(selected) }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.inline_hook_backend_dobby)) }, onClick = {
+                    expanded = false; onSelect(IManagerService.INLINE_HOOK_BACKEND_DOBBY)
+                })
+                if (supported) DropdownMenuItem(
+                    text = { Text(stringResource(R.string.inline_hook_backend_shadowhook)) },
+                    onClick = { expanded = false; onSelect(IManagerService.INLINE_HOOK_BACKEND_SHADOWHOOK) },
+                )
+            }
+        }
+    }
+}
 @Composable
 private fun FrameworkToggle(
     title: String,

@@ -339,4 +339,7 @@ class FakeManagerService(
 private fun PackageInfo.setVersionCodeCompat(value: Long) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) longVersionCode = value
     else versionCode = value.toInt()
+
+    override fun getInlineHookBackend(): Int = real?.inlineHookBackend ?: 0
+    override fun setInlineHookBackend(backend: Int) { real?.setInlineHookBackend(backend) }
 }

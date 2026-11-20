@@ -478,4 +478,8 @@
     <string name="action_install_other_user_prompt_app">Choose the user to install this app for.</string>
     <string name="action_installed_other_user">Installed for %1$s.</string>
     <string name="action_install_other_user_failed">Could not install for %1$s.</string>
+    <string name="inline_hook_backend_title">Inline hook backend</string>
+    <string name="inline_hook_backend_summary">Used by processes started after this setting changes.</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
 </resources>
