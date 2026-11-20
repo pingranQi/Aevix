@@ -30,9 +30,11 @@ add_subdirectory(fmt)
 # Disable import-std before creating LSPlant targets; changing the target
 # property after add_subdirectory() is too late for CMake's synthesized std
 # module dependency. Keep CXX_SCAN_FOR_MODULES enabled for LSPlant's own
-# CXX_MODULES file sets.
+# CXX_MODULES file sets. Store OFF in the cache as well as the directory scope:
+# nested project() calls/toolchain initialization must not restore host std modules.
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
 	set(CMAKE_CXX_MODULE_STD OFF)
+	set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "" FORCE)
 endif()
 add_subdirectory(lsplant/lsplant/src/main/jni)
 
