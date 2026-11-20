@@ -907,13 +907,31 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
         return nullptr;
     }
 
-    // Create modern and legacy arrays. Preserve downstream's typed modern callback array.
-    jobjectArray modern =
-        env->NewObjectArray((jsize)hook_item->modern_callbacks.size(), callback_class, nullptr);
-    jobjectArray legacy =
-        env->NewObjectArray((jsize)hook_item->legacy_callbacks.size(), obj_class, nullptr);
-    if (modern == nullptr || legacy == nullptr) {
+    // jsize is the JNI array-length type; refuse sizes that cannot be represented.
+    constexpr auto kMaxArrayLength = static_cast<size_t>(std::numeric_limits<jsize>::max());
+    if (hook_item->modern_callbacks.size() > kMaxArrayLength ||
+        hook_item->legacy_callbacks.size() > kMaxArrayLength) {
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        return nullptr;
+    }
+
+    // Create arrays one at a time: after a failed JNI allocation, do not make
+    // another JNI call while an exception is pending.
+    jobjectArray modern = env->NewObjectArray(
+        static_cast<jsize>(hook_item->modern_callbacks.size()), callback_class, nullptr);
+    if (modern == nullptr || env->ExceptionCheck()) {
         if (modern != nullptr) env->DeleteLocalRef(modern);
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+
+    jobjectArray legacy = env->NewObjectArray(
+        static_cast<jsize>(hook_item->legacy_callbacks.size()), obj_class, nullptr);
+    if (legacy == nullptr || env->ExceptionCheck()) {
+        env->DeleteLocalRef(modern);
         if (legacy != nullptr) env->DeleteLocalRef(legacy);
         env->DeleteLocalRef(res);
         env->DeleteLocalRef(obj_class);
@@ -921,18 +939,34 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
         return nullptr;
     }
 
+    // A failed SetObjectArrayElement must abort the snapshot. Keep the pending
+    // exception for the Java caller, but release every local reference first.
+    const auto fail_snapshot = [&]() -> jobjectArray {
+        env->DeleteLocalRef(modern);
+        env->DeleteLocalRef(legacy);
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        return nullptr;
+    };
+
     jsize i = 0;
     for (const auto &callback_pair : hook_item->modern_callbacks) {
         env->SetObjectArrayElement(modern, i++, callback_pair.second);
+        if (env->ExceptionCheck()) return fail_snapshot();
     }
 
     i = 0;
     for (const auto &callback_pair : hook_item->legacy_callbacks) {
         env->SetObjectArrayElement(legacy, i++, callback_pair.second);
+        if (env->ExceptionCheck()) return fail_snapshot();
     }
 
     env->SetObjectArrayElement(res, 0, modern);
+    if (env->ExceptionCheck()) return fail_snapshot();
+
     env->SetObjectArrayElement(res, 1, legacy);
+    if (env->ExceptionCheck()) return fail_snapshot();
+
     env->DeleteLocalRef(modern);
     env->DeleteLocalRef(legacy);
     env->DeleteLocalRef(obj_class);
