@@ -33,7 +33,7 @@ assert "StoreWidened(env, *wrapper, declared, element, a[i]);" in source
 # callbackSnapshot reserves nullptr exclusively for the no-hook/no-backup cases.
 # Allocation and argument failures must propagate instead of masquerading as an empty snapshot.
 snapshot_start = source.index("AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot")
-snapshot_end = source.index("\\n}\\n", snapshot_start) + 2
+snapshot_end = source.index("\n}\n", snapshot_start) + 2
 snapshot = source[snapshot_start:snapshot_end]
 assert "env->ExceptionClear()" not in snapshot
 assert 'throw_if_no_exception("java/lang/OutOfMemoryError"' in snapshot
