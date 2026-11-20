@@ -97,6 +97,7 @@ object ManagerService : IManagerService.Stub() {
       synchronized(ManagerService) { ManagerService.guard = this }
       runCatching {
             binder.linkToDeath(this, 0)
+            if (!binder.isBinderAlive) throw RemoteException("Manager binder died during registration")
             applyXspaceWorkaround(connection)
           }
           .onFailure {

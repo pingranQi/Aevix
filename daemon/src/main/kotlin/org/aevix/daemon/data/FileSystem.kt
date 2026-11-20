@@ -275,8 +275,9 @@ private fun readDex(
 
   var memory: SharedMemory? = null
   try {
-    memory = SharedMemory.create(null, expectedSize.toInt())
-    val mapped = memory.mapReadWrite()
+    val allocated = SharedMemory.create(null, expectedSize.toInt())
+    memory = allocated
+    val mapped = allocated.mapReadWrite()
     try {
       copyExactly(inputStream, mapped)
     } finally {
@@ -286,7 +287,7 @@ private fun readDex(
     if (obfuscate || apiProtection) {
       // API protection is an independent switch: it must rewrite Xposed API names even when
       // general framework-name obfuscation is disabled (for example, in a debug build).
-      val previous = memory
+      val previous = checkNotNull(memory)
       val transformed = ObfuscationManager.obfuscateDex(previous, obfuscate, apiProtection)
       memory = transformed
       if (previous !== transformed) previous.close()

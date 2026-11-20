@@ -17,7 +17,7 @@ class DexStreamReaderTest {
         }
     val destination = ByteBuffer.allocate(5)
 
-    copyExactly(source, destination)
+    FileSystem.copyExactly(source, destination)
 
     assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), destination.array())
   }
