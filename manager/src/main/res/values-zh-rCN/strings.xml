@@ -429,4 +429,8 @@
     <string name="action_invalidate_art_inline_hooks_enabled">已为 %1$s 启用 ART 内联 HOOK 兼容模式。</string>
     <string name="action_invalidate_art_inline_hooks_disabled">已为 %1$s 禁用 ART 内联 HOOK 兼容模式。</string>
     <string name="action_invalidate_art_inline_hooks_failed">无法更改 %1$s 的 ART 内联 HOOK 兼容模式。</string>
+    <string name="inline_hook_backend_title">内联 Hook 后端</string>
+    <string name="inline_hook_backend_summary">用于安装原生内联 Hook 的引擎。新启动的进程会使用所选引擎；重启后会对所有进程生效。</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
 </resources>

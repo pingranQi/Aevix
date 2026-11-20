@@ -429,4 +429,8 @@
     <string name="action_invalidate_art_inline_hooks_enabled">已為 %1$s 啟用 ART 內聯 HOOK 相容模式。</string>
     <string name="action_invalidate_art_inline_hooks_disabled">已為 %1$s 停用 ART 內聯 HOOK 相容模式。</string>
     <string name="action_invalidate_art_inline_hooks_failed">無法變更 %1$s 的 ART 內聯 HOOK 相容模式。</string>
+    <string name="inline_hook_backend_title">內聯 Hook 後端</string>
+    <string name="inline_hook_backend_summary">用於安裝原生內聯 Hook 的引擎。新啟動的行程會使用所選引擎；重新啟動後會對所有行程生效。</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
 </resources>

@@ -428,4 +428,8 @@
     <string name="action_invalidate_art_inline_hooks_enabled">%1$s에 ART 인라인 후크 호환 모드를 사용하도록 설정했습니다.</string>
     <string name="action_invalidate_art_inline_hooks_disabled">%1$s에 ART 인라인 후크 호환 모드를 사용하지 않도록 설정했습니다.</string>
     <string name="action_invalidate_art_inline_hooks_failed">%1$s의 ART 인라인 후크 호환 모드를 변경할 수 없습니다.</string>
+    <string name="inline_hook_backend_title">Inline hook backend</string>
+    <string name="inline_hook_backend_summary">Which engine installs native inline hooks. New processes use the chosen engine; a reboot applies it to everything already running.</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
 </resources>
