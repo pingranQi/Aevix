@@ -759,7 +759,7 @@ class ModuleAppService(private val loadedModule: LoadedModule) : IXposedService.
       throw RemoteException("Invalid remote preference map")
     }
     (puts as? Map<*, *>)?.forEach { (key, value) ->
-      if (key !is String || !PreferenceStore.isSupportedPreferenceValue(value)) {
+      if (key !is String || !isSupportedPreferenceValue(value)) {
         throw RemoteException("Unsupported remote preference value")
       }
       values[key] = value
