@@ -52,6 +52,7 @@ object ConfigCache {
   private val readyLock = ReentrantLock()
   private val readySignal = readyLock.newCondition()
   private val warmUpChannel = Channel<Unit>(Channel.CONFLATED)
+  private const val READY_WAIT_MS = 200L
   private const val GET_MODULES_WAIT_MS = 3000L
 
   // Held for the whole of a rebuild, so cache preparation and cache updates cannot overlap.
@@ -88,11 +89,11 @@ object ConfigCache {
     applySqliteHelperWorkaround()
   }
 
-  private fun ensureCacheReady(): Boolean {
+  private fun ensureCacheReady(timeoutMs: Long = READY_WAIT_MS): Boolean {
     if (state.isCacheReady) return true
     if (packageManager?.asBinder()?.isBinderAlive != true) return false
     warmUp()
-    val ready = awaitReady(GET_MODULES_WAIT_MS)
+    val ready = awaitReady(timeoutMs)
     if (!ready) Log.w(TAG, "Cache readiness wait timed out; refusing to use an incomplete snapshot")
     return ready
   }
@@ -544,7 +545,7 @@ object ConfigCache {
       Log.w(TAG, "Skip unexpected module queries for $processName")
       return emptyList()
     }
-    if (!ensureCacheReady()) {
+    if (!ensureCacheReady(GET_MODULES_WAIT_MS)) {
       Log.w(TAG, "Returning no modules for $processName/$uid because the cache is not ready")
       return emptyList()
     }
