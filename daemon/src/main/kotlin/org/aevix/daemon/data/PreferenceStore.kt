@@ -195,6 +195,12 @@ object PreferenceStore {
       (getModulePrefs("lspd", 0, "config")["scope_request_blocked"] as? Set<*>)?.contains(pkg) ==
           true
   
+  fun getInlineHookBackend(): Int =
+      getModulePrefs("lspd", 0, "config")["inline_hook_backend"] as? Int ?: 0
+
+  fun setInlineHookBackend(backend: Int) =
+      updateModulePref("lspd", 0, "config", "inline_hook_backend", backend)
+
   fun getInvalidateArtInlineHookPackages(): Set<String> =
       getModulePrefs("lspd", 0, "config")
           .asSequence()
