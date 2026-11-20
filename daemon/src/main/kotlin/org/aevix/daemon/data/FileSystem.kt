@@ -314,6 +314,14 @@ object FileSystem {
 
     val preLoadedApk = ModuleCode()
     val preLoadedDexes = mutableListOf<SharedMemory>()
+
+    // DEX handles are locally owned until the complete ModuleCode is returned.
+    // Any parse/read failure must release handles already acquired.
+    fun fail(reason: ModuleLoad): ModuleLoad {
+      preLoadedDexes.forEach { runCatching { it.close() } }
+      preLoadedDexes.clear()
+      return reason
+    }
     val moduleClassNames = mutableListOf<String>()
     val moduleLibraryNames = mutableListOf<String>()
     var isLegacy = false
@@ -383,12 +391,12 @@ object FileSystem {
               }
               "UNSUPPORTED" -> {
                 Log.w(TAG, "Module $apkPath uses API 100 which is no longer supported.")
-                return ModuleLoad.UnsupportedApi
+                return fail(ModuleLoad.UnsupportedApi)
               }
-              else -> return ModuleLoad.Unusable // No valid init files found
+              else -> return fail(ModuleLoad.Unusable) // No valid init files found
             }
 
-            if (moduleClassNames.isEmpty()) return ModuleLoad.Unusable
+            if (moduleClassNames.isEmpty()) return fail(ModuleLoad.Unusable)
 
             // Read DEX files
             var secondary = 1
@@ -404,10 +412,10 @@ object FileSystem {
         }
         .onFailure {
           Log.e(TAG, "Failed to load module $apkPath", it)
-          return ModuleLoad.Unusable
+          return fail(ModuleLoad.Unusable)
         }
 
-    if (preLoadedDexes.isEmpty()) return ModuleLoad.Unusable
+    if (preLoadedDexes.isEmpty()) return fail(ModuleLoad.Unusable)
 
     // Apply obfuscation
     if (obfuscate) {
