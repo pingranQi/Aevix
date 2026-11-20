@@ -876,36 +876,125 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     // No callbacks means the dispatcher can invoke the original without allocating JNI arrays.
     if (hook_item->modern_callbacks.empty() && hook_item->legacy_callbacks.empty()) return nullptr;
 
-    // Get the generic Object class
+    // JNI allocation failures must not be confused with the nullptr sentinel for an empty snapshot.
+    const auto throw_if_no_exception = [env](const char *class_name, const char *message) {
+        if (env->ExceptionCheck()) return;
+        jclass exception_class = env->FindClass(class_name);
+        if (exception_class == nullptr) return;  // FindClass leaves its own exception pending.
+        env->ThrowNew(exception_class, message);
+        env->DeleteLocalRef(exception_class);
+    };
+
+    if (callback_class == nullptr) {
+        throw_if_no_exception("java/lang/NullPointerException",
+                              "callback class must not be null");
+        return nullptr;
+    }
+
+    // jsize is the JNI array-length type. Fail explicitly rather than returning the
+    // nullptr that the Java caller reserves to mean "there are no callbacks".
+    constexpr auto kMaxArrayLength = static_cast<size_t>(std::numeric_limits<jsize>::max());
+    if (hook_item->modern_callbacks.size() > kMaxArrayLength ||
+        hook_item->legacy_callbacks.size() > kMaxArrayLength) {
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "callback snapshot exceeds the JNI array length limit");
+        return nullptr;
+    }
+
+    // Resolve and validate every JNI class/array before passing it to another JNI call.
     jclass obj_class = env->FindClass("java/lang/Object");
+    if (obj_class == nullptr || env->ExceptionCheck()) {
+        if (obj_class != nullptr) env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/IllegalStateException",
+                              "cannot resolve java.lang.Object for callback snapshot");
+        return nullptr;
+    }
 
-    // Construct the result array Object[2][]
-    // Use an existing array to reliably get the Class for Object[]
+    // Construct the result array Object[2][] using an actual Object[] instance.
     jobjectArray dummy_array = env->NewObjectArray(0, obj_class, nullptr);
+    if (dummy_array == nullptr || env->ExceptionCheck()) {
+        if (dummy_array != nullptr) env->DeleteLocalRef(dummy_array);
+        env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "cannot allocate callback snapshot type probe");
+        return nullptr;
+    }
     jclass obj_array_class = env->GetObjectClass(dummy_array);
+    if (obj_array_class == nullptr || env->ExceptionCheck()) {
+        if (obj_array_class != nullptr) env->DeleteLocalRef(obj_array_class);
+        env->DeleteLocalRef(dummy_array);
+        env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "cannot resolve callback snapshot array class");
+        return nullptr;
+    }
     jobjectArray res = env->NewObjectArray(2, obj_array_class, nullptr);
+    env->DeleteLocalRef(obj_array_class);
+    env->DeleteLocalRef(dummy_array);
+    if (res == nullptr || env->ExceptionCheck()) {
+        if (res != nullptr) env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "cannot allocate callback snapshot result");
+        return nullptr;
+    }
 
-    // Create modern and legacy arrays
-    // Use 'callback_class' (AevixHookRecord) for the modern array for strict type safety
-    jobjectArray modern =
-        env->NewObjectArray((jsize)hook_item->modern_callbacks.size(), callback_class, nullptr);
-    jobjectArray legacy =
-        env->NewObjectArray((jsize)hook_item->legacy_callbacks.size(), obj_class, nullptr);
+    // Create arrays one at a time: after a failed JNI allocation, do not make
+    // another JNI call while an exception is pending.
+    jobjectArray modern = env->NewObjectArray(
+        static_cast<jsize>(hook_item->modern_callbacks.size()), callback_class, nullptr);
+    if (modern == nullptr || env->ExceptionCheck()) {
+        if (modern != nullptr) env->DeleteLocalRef(modern);
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "cannot allocate modern callback snapshot");
+        return nullptr;
+    }
+
+    jobjectArray legacy = env->NewObjectArray(
+        static_cast<jsize>(hook_item->legacy_callbacks.size()), obj_class, nullptr);
+    if (legacy == nullptr || env->ExceptionCheck()) {
+        if (legacy != nullptr) env->DeleteLocalRef(legacy);
+        env->DeleteLocalRef(modern);
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        throw_if_no_exception("java/lang/OutOfMemoryError",
+                              "cannot allocate legacy callback snapshot");
+        return nullptr;
+    }
+
+    // A failed SetObjectArrayElement must abort the snapshot. Keep the pending
+    // exception for the Java caller, but release every local reference first.
+    const auto fail_snapshot = [&]() -> jobjectArray {
+        env->DeleteLocalRef(modern);
+        env->DeleteLocalRef(legacy);
+        env->DeleteLocalRef(res);
+        env->DeleteLocalRef(obj_class);
+        return nullptr;
+    };
 
     jsize i = 0;
     for (const auto &callback_pair : hook_item->modern_callbacks) {
         env->SetObjectArrayElement(modern, i++, callback_pair.second);
+        if (env->ExceptionCheck()) return fail_snapshot();
     }
 
     i = 0;
     for (const auto &callback_pair : hook_item->legacy_callbacks) {
         env->SetObjectArrayElement(legacy, i++, callback_pair.second);
+        if (env->ExceptionCheck()) return fail_snapshot();
     }
 
     env->SetObjectArrayElement(res, 0, modern);
+    if (env->ExceptionCheck()) return fail_snapshot();
+
     env->SetObjectArrayElement(res, 1, legacy);
+    if (env->ExceptionCheck()) return fail_snapshot();
+
     env->DeleteLocalRef(modern);
     env->DeleteLocalRef(legacy);
+    env->DeleteLocalRef(obj_class);
     return res;
 }
 
