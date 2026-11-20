@@ -239,7 +239,7 @@ val injectedPackageUid = 2000
 val defaultManagerPackageName = "org.aevix.manager"
 
 val androidTargetSdkVersion = 37
-val androidMinSdkVersion = 27
+val androidMinSdkVersion = 34 // Android 14+
 val androidBuildToolsVersion = "37.0.0"
 val androidCompileSdkVersion = 37
 val androidCompileNdkVersion = "30.0.16248370"
