@@ -25,21 +25,16 @@ option(FMT_INSTALL OFF)
 
 add_subdirectory(dobby)
 add_subdirectory(fmt)
-add_subdirectory(lsplant/lsplant/src/main/jni)
 
-# LSPlant needs module scanning for its own CXX_MODULES file sets, but it does not
-# import the C++ standard library module. On newer CMake/toolchain combinations,
-# leaving CXX_MODULE_STD enabled makes CMake synthesize a host std.cc module and
-# clang-scan-deps tries to parse the host libstdc++ headers with the Android NDK
-# compiler (failing on bits/stdc++.h). Disable only import-std support; keep
-# CXX_SCAN_FOR_MODULES enabled on LSPlant's module targets.
+# CMake initializes CXX_MODULE_STD on each target at target creation time.
+# Disable import-std before creating LSPlant targets; changing the target
+# property after add_subdirectory() is too late for CMake's synthesized std
+# module dependency. Keep CXX_SCAN_FOR_MODULES enabled for LSPlant's own
+# CXX_MODULES file sets.
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
-	foreach(target IN ITEMS lsplant_static lsplant)
-		if(TARGET ${target})
-			set_property(TARGET ${target} PROPERTY CXX_MODULE_STD OFF)
-		endif()
-	endforeach()
+	set(CMAKE_CXX_MODULE_STD OFF)
 endif()
+add_subdirectory(lsplant/lsplant/src/main/jni)
 
 target_compile_options(lsplant_static PUBLIC -Wno-gnu-anonymous-struct
 	# lsplant.cc's `operator""_uarr()` is a string literal operator template, which is a GNU
