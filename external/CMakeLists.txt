@@ -8,11 +8,11 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
 set(CMAKE_CXX_STANDARD 23)
 
 set(XZ_SOURCES
-\txz_crc32.c
-\txz_crc64.c
-\t# xz_dec_bcj.c
-\txz_dec_lzma2.c
-\txz_dec_stream.c)
+	xz_crc32.c
+	xz_crc64.c
+	# xz_dec_bcj.c
+	xz_dec_lzma2.c
+	xz_dec_stream.c)
 set(XZ_INCLUDES xz-embedded/linux/include/linux xz-embedded/userspace)
 list(TRANSFORM XZ_SOURCES PREPEND xz-embedded/linux/lib/xz/)
 add_library(xz_static STATIC ${XZ_SOURCES})
@@ -34,16 +34,16 @@ add_subdirectory(lsplant/lsplant/src/main/jni)
 # compiler (failing on bits/stdc++.h). Disable only import-std support; keep
 # CXX_SCAN_FOR_MODULES enabled on LSPlant's module targets.
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
-\tforeach(target IN ITEMS lsplant_static lsplant)
-\t\tif(TARGET ${target})
-\t\t\tset_property(TARGET ${target} PROPERTY CXX_MODULE_STD OFF)
-\t\tendif()
-\tendforeach()
+	foreach(target IN ITEMS lsplant_static lsplant)
+		if(TARGET ${target})
+			set_property(TARGET ${target} PROPERTY CXX_MODULE_STD OFF)
+		endif()
+	endforeach()
 endif()
 
 target_compile_options(lsplant_static PUBLIC -Wno-gnu-anonymous-struct
-\t# lsplant.cc's `operator""_uarr()` is a string literal operator template, which is a GNU
-\t# extension clang warns about under -Wpedantic. Upstream code we do not own, and the
-\t# warning was printed once per ABI on every build.
-\t-Wno-gnu-string-literal-operator-template)
+	# lsplant.cc's `operator""_uarr()` is a string literal operator template, which is a GNU
+	# extension clang warns about under -Wpedantic. Upstream code we do not own, and the
+	# warning was printed once per ABI on every build.
+	-Wno-gnu-string-literal-operator-template)
 target_compile_definitions(fmt-header-only INTERFACE FMT_USE_LOCALE=0 FMT_USE_FLOAT=0 FMT_USE_DOUBLE=0 FMT_USE_LONG_DOUBLE=0 FMT_USE_BITINT=0)
