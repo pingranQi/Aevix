@@ -290,6 +290,11 @@ subprojects {
             defaultConfig.externalNativeBuild.cmake {
                 arguments.add("-DCMAKE_CXX_SCAN_FOR_MODULES=OFF")
                 arguments.add("-DCMAKE_CXX_MODULE_STD=OFF")
+                // AGP otherwise selects the NDK-bundled Ninja 1.10.2, which cannot generate
+                // LSPlant C++ module dependencies. CI pins Ninja 1.13.2 explicitly.
+                System.getenv("NINJA_EXECUTABLE")?.let {
+                    arguments.add("-DCMAKE_MAKE_PROGRAM=$it")
+                }
             }
 
             defaultConfig.apply {
