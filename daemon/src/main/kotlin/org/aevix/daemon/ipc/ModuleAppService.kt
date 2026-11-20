@@ -734,17 +734,34 @@ class ModuleAppService(private val loadedModule: LoadedModule) : IXposedService.
     val userId = ensureModule()
     val values = mutableMapOf<String, Any?>()
 
+    // The wire format uses Serializable collections. Resolve them only with the
+    // boot class loader so module-defined classes are not loaded in the root daemon.
+    diff.classLoader = String::class.java.classLoader
+
     // RemotePreferences.Editor always writes this key, and sets it for edit().clear(). Ignoring it
     // left every key the module app just cleared in place.
     if (diff.getBoolean("clear", false)) {
       PreferenceStore.deleteModulePrefs(loadedModule.packageName, userId, group)
     }
 
-    diff.getSerializable("delete")?.let { deletes ->
-      (deletes as Set<*>).forEach { values[it as String] = null }
+    val deletes = diff.getSerializable("delete")
+    if (deletes != null && deletes !is Set<*>) {
+      throw RemoteException("Invalid remote preference delete set")
     }
-    diff.getSerializable("put")?.let { puts ->
-      (puts as Map<*, *>).forEach { (k, v) -> values[k as String] = v }
+    (deletes as? Set<*>)?.forEach { key ->
+      if (key !is String) throw RemoteException("Invalid remote preference key")
+      values[key] = null
+    }
+
+    val puts = diff.getSerializable("put")
+    if (puts != null && puts !is Map<*, *>) {
+      throw RemoteException("Invalid remote preference map")
+    }
+    (puts as? Map<*, *>)?.forEach { (key, value) ->
+      if (key !is String || !PreferenceStore.isSupportedPreferenceValue(value)) {
+        throw RemoteException("Unsupported remote preference value")
+      }
+      values[key] = value
     }
 
     runCatching {

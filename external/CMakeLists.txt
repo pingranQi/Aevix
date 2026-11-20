@@ -26,17 +26,28 @@ option(FMT_INSTALL OFF)
 add_subdirectory(dobby)
 add_subdirectory(fmt)
 
-# CMake initializes CXX_MODULE_STD on each target at target creation time.
-# Disable import-std before creating LSPlant targets; changing the target
-# property after add_subdirectory() is too late for CMake's synthesized std
-# module dependency. Keep CXX_SCAN_FOR_MODULES enabled for LSPlant's own
-# CXX_MODULES file sets. Store OFF in the cache as well as the directory scope:
-# nested project() calls/toolchain initialization must not restore host std modules.
+# LSPlant calls project() before creating its targets. CMake can reinitialize
+# CXX_MODULE_STD during that call, so install a project hook that reapplies the
+# opt-out after toolchain initialization and before LSPlant creates targets.
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
 	set(CMAKE_CXX_MODULE_STD OFF)
 	set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "" FORCE)
+	set(CMAKE_PROJECT_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/disable-cxx-module-std.cmake")
 endif()
 add_subdirectory(lsplant/lsplant/src/main/jni)
+
+# Disable only CMake's synthesized import-std target. LSPlant must continue
+# scanning its own CXX_MODULES file sets.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
+	get_target_property(_lsplant_module_std lsplant_static CXX_MODULE_STD)
+	if(_lsplant_module_std)
+		message(FATAL_ERROR "LSPlant unexpectedly enables CXX_MODULE_STD")
+	endif()
+	get_target_property(_lsplant_module_scan lsplant_static CXX_SCAN_FOR_MODULES)
+	if(NOT _lsplant_module_scan)
+		message(FATAL_ERROR "LSPlant's own C++ module scanning must remain enabled")
+	endif()
+endif()
 
 target_compile_options(lsplant_static PUBLIC -Wno-gnu-anonymous-struct
 	# lsplant.cc's `operator""_uarr()` is a string literal operator template, which is a GNU

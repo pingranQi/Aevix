@@ -185,7 +185,7 @@ abstract class GitCommitHashValueSource : ValueSource<String, GitCommitHashValue
 
         val repository = parameters.buildRepository.getOrElse("")
         if (repository.isBlank()) {
-            val dirty = capture("git", "status", "--porcelain", "--untracked-files=no") != null
+            val dirty = capture("git", "status", "--porcelain", "--untracked-files=all") != null
             return if (dirty) "$head+${hostname()}" else head
         }
 
@@ -281,7 +281,7 @@ subprojects {
 
             buildFeatures.buildConfig = true
             externalNativeBuild.cmake {
-                version = "3.29.8+"
+                version = "3.30.5"
                 buildStagingDirectory = layout.buildDirectory.get().asFile
             }
 

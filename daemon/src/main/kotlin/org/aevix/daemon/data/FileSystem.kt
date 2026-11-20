@@ -14,10 +14,12 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import hidden.HiddenApiBridge
+import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.io.InputStream
-import java.nio.channels.Channels
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
@@ -240,29 +242,63 @@ object FileSystem {
     @Suppress("DEPRECATION") Resources(am, null, null)
   }
 
-  /** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
-  private fun readDex(
-      inputStream: InputStream,
-      obfuscate: Boolean,
-      apiProtection: Boolean
-  ): SharedMemory {
-    var memory = SharedMemory.create(null, inputStream.available())
-    val byteBuffer = memory.mapReadWrite()
-    Channels.newChannel(inputStream).read(byteBuffer)
-    SharedMemory.unmap(byteBuffer)
+  /** Copy exactly the expected DEX bytes, rejecting truncation and trailing data. */
+internal fun copyExactly(inputStream: InputStream, destination: ByteBuffer) {
+  val scratch = ByteArray(minOf(8192, destination.remaining()))
+  while (destination.hasRemaining()) {
+    val count = inputStream.read(scratch, 0, minOf(scratch.size, destination.remaining()))
+    when {
+      count < 0 -> throw EOFException("DEX entry ended before its declared size")
+      count == 0 -> {
+        val value = inputStream.read()
+        if (value < 0) throw EOFException("DEX entry ended before its declared size")
+        destination.put(value.toByte())
+      }
+      else -> destination.put(scratch, 0, count)
+    }
+  }
+  if (inputStream.read() != -1) {
+    throw IOException("DEX entry contains more bytes than its declared size")
+  }
+}
+
+/** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
+private fun readDex(
+    inputStream: InputStream,
+    expectedSize: Long,
+    obfuscate: Boolean,
+    apiProtection: Boolean
+): SharedMemory {
+  require(expectedSize in 1..Int.MAX_VALUE.toLong()) {
+    "Invalid DEX entry size: $expectedSize"
+  }
+
+  var memory: SharedMemory? = null
+  try {
+    memory = SharedMemory.create(null, expectedSize.toInt())
+    val mapped = memory.mapReadWrite()
+    try {
+      copyExactly(inputStream, mapped)
+    } finally {
+      SharedMemory.unmap(mapped)
+    }
 
     if (obfuscate || apiProtection) {
       // API protection is an independent switch: it must rewrite Xposed API names even when
       // general framework-name obfuscation is disabled (for example, in a debug build).
-      val newMemory = ObfuscationManager.obfuscateDex(memory, obfuscate, apiProtection)
-      if (memory !== newMemory) {
-        memory.close()
-        memory = newMemory
-      }
+      val previous = memory
+      val transformed = ObfuscationManager.obfuscateDex(previous, obfuscate, apiProtection)
+      memory = transformed
+      if (previous !== transformed) previous.close()
     }
-    memory.setProtect(OsConstants.PROT_READ)
-    return memory
+    val result = checkNotNull(memory)
+    result.setProtect(OsConstants.PROT_READ)
+    return result
+  } catch (failure: Throwable) {
+    runCatching { memory?.close() }
+    throw failure
   }
+}
 
   /**
    * The packages a module claims, when its module.prop fixes the scope. Null when it does not, so
@@ -404,7 +440,7 @@ object FileSystem {
               val entryName = if (secondary == 1) "classes.dex" else "classes$secondary.dex"
               val dexEntry = zip.getEntry(entryName) ?: break
               zip.getInputStream(dexEntry).use {
-                preLoadedDexes.add(readDex(it, obfuscate, apiProtection))
+                preLoadedDexes.add(readDex(it, dexEntry.size, obfuscate, apiProtection))
               }
               secondary++
             }
