@@ -29,6 +29,8 @@ const val DEX_TRANSACTION_CODE =
     ('_'.code shl 24) or ('D'.code shl 16) or ('E'.code shl 8) or 'X'.code
 const val OBFUSCATION_MAP_TRANSACTION_CODE =
     ('_'.code shl 24) or ('O'.code shl 16) or ('B'.code shl 8) or 'F'.code
+const val INLINE_HOOK_TRANSACTION_CODE =
+    ('_'.code shl 24) or ('I'.code shl 16) or ('H'.code shl 8) or 'B'.code
 
 /**
  * What an injected process asks the framework for — this project's `IFrameworkService`.
@@ -299,6 +301,12 @@ object FrameworkService : IFrameworkService.Stub() {
         reply?.let {
           writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
         }
+        return true
+      }
+      INLINE_HOOK_TRANSACTION_CODE -> {
+        ensureRegistered()
+        reply?.writeNoException()
+        reply?.writeInt(ManagerService.getInlineHookBackend())
         return true
       }
       OBFUSCATION_MAP_TRANSACTION_CODE -> {

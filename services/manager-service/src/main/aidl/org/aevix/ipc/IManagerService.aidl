@@ -73,7 +73,7 @@ interface IManagerService {
      * transaction ids follow declaration order, this number is the only thing standing between a
      * mismatched pair and a call that lands on the wrong method.</p>
      */
-    const int PROTOCOL_VERSION = 3;
+    const int PROTOCOL_VERSION = 4;
 
     /**
      * Which generation of this interface the daemon implements, never below 1.
@@ -812,4 +812,15 @@ interface IManagerService {
 
     /** Persists API protection and rebuilds the module cache for subsequently injected processes. */
     void setApiProtectionEnabled(boolean enabled);
+    
+    // ---- native inline-hook compatibility ------------------------------------------------------
+
+    /** The selected native inline-hook backend, one of INLINE_HOOK_BACKEND_* constants. */
+    int getInlineHookBackend();
+
+    /** Sets the native inline-hook backend for subsequently specialized processes. */
+    void setInlineHookBackend(int backend);
+
+    const int INLINE_HOOK_BACKEND_DOBBY = 0;
+    const int INLINE_HOOK_BACKEND_SHADOWHOOK = 1;
 }
