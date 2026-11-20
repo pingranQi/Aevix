@@ -97,6 +97,8 @@ public:
 
     int FetchInlineHookBackend(JNIEnv *env, jobject binder);
 
+    bool ShouldInvalidateArtInlineHooks(JNIEnv *env, jobject binder);
+
     /**
      * @brief Sets up the JNI hook to intercept Binder transactions.
      *

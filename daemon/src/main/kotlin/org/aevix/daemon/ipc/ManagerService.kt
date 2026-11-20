@@ -326,6 +326,12 @@ object ManagerService : IManagerService.Stub() {
 
   override fun getInlineHookBackend() = PreferenceStore.getInlineHookBackend()
 
+  override fun getInvalidateArtInlineHookPackages(): MutableList<String> =
+      PreferenceStore.getInvalidateArtInlineHookPackages().sorted().toMutableList()
+
+  override fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Boolean =
+      PreferenceStore.setInvalidateArtInlineHooks(packageName, enabled)
+
   override fun setInlineHookBackend(backend: Int) {
     if (backend == IManagerService.INLINE_HOOK_BACKEND_DOBBY ||
         backend == IManagerService.INLINE_HOOK_BACKEND_SHADOWHOOK) {

@@ -14,6 +14,8 @@ import org.aevix.ipc.LoadedModule
 import org.aevix.ipc.IProcessChannel
 import org.aevix.ipc.IFrameworkService
 import org.aevix.daemon.data.ConfigCache
+import org.aevix.daemon.data.InlineHookProcessPolicy
+import org.aevix.daemon.data.PreferenceStore
 import org.aevix.daemon.data.FileSystem
 import org.aevix.daemon.system.FIRST_APPLICATION_UID
 import org.aevix.daemon.system.PER_USER_RANGE
@@ -31,6 +33,8 @@ const val OBFUSCATION_MAP_TRANSACTION_CODE =
     ('_'.code shl 24) or ('O'.code shl 16) or ('B'.code shl 8) or 'F'.code
 const val INLINE_HOOK_TRANSACTION_CODE =
     ('_'.code shl 24) or ('I'.code shl 16) or ('H'.code shl 8) or 'B'.code
+const val INVALIDATE_ART_INLINE_HOOKS_TRANSACTION_CODE =
+    ('_'.code shl 24) or ('I'.code shl 16) or ('N'.code shl 8) or 'L'.code
 
 /**
  * What an injected process asks the framework for — this project's `IFrameworkService`.
@@ -301,6 +305,14 @@ object FrameworkService : IFrameworkService.Stub() {
         reply?.let {
           writeObfuscationMap(it, state.isDexObfuscateEnabled, state.isApiProtectionEnabled)
         }
+        return true
+      }
+      INVALIDATE_ART_INLINE_HOOKS_TRANSACTION_CODE -> {
+        val info = ensureRegistered()
+        val invalidate = InlineHookProcessPolicy.mayInvalidate(info.processName, info.key.uid) &&
+            PreferenceStore.shouldInvalidateArtInlineHooks(info.processName, info.key.uid)
+        reply?.writeNoException()
+        reply?.writeInt(if (invalidate) 1 else 0)
         return true
       }
       INLINE_HOOK_TRANSACTION_CODE -> {
