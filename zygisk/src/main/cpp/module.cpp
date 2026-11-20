@@ -340,6 +340,7 @@ void AevixModule::postAppSpecialize(const zygisk::AppSpecializeArgs *args) {
     // from before the two were bundled still answers, so ask for it the long way round instead.
     if (obfs_map.empty()) obfs_map = ipc_bridge.FetchObfuscationMap(env_, binder.get());
     ConfigBridge::GetInstance()->obfuscation_map(std::move(obfs_map));
+    SetInlineHookBackend(ipc_bridge.FetchInlineHookBackend(env_, binder.get()));
 
     {
         PreloadedDex dex(dex_fd, dex_size);
@@ -441,6 +442,7 @@ void AevixModule::postServerSpecialize(const zygisk::ServerSpecializeArgs *args)
     // See postAppSpecialize: the map travels with the DEX when the daemon has it to give.
     if (obfs_map.empty()) obfs_map = ipc_bridge.FetchObfuscationMap(env_, effective_binder);
     ConfigBridge::GetInstance()->obfuscation_map(std::move(obfs_map));
+    SetInlineHookBackend(ipc_bridge.FetchInlineHookBackend(env_, system_binder.get()));
 
     {
         PreloadedDex dex(dex_fd, dex_size);

@@ -95,6 +95,8 @@ public:
      */
     std::map<std::string, std::string> FetchObfuscationMap(JNIEnv *env, jobject binder);
 
+    int FetchInlineHookBackend(JNIEnv *env, jobject binder);
+
     /**
      * @brief Sets up the JNI hook to intercept Binder transactions.
      *
