@@ -285,6 +285,12 @@ subprojects {
                 buildStagingDirectory = layout.buildDirectory.get().asFile
             }
 
+            // Pass this as a Gradle CMake argument as well as setting it in the CMake roots:
+            // nested projects such as LSPlant call project() and can re-seed the cache option.
+            defaultConfig.externalNativeBuild.cmake {
+                arguments.add("-DCMAKE_CXX_SCAN_FOR_MODULES=OFF")
+            }
+
             defaultConfig.apply {
                 minSdk = androidMinSdkVersion
                 // 64-bit ARM only. ARMv7 devices are a shrinking minority and every one of them
