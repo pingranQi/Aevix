@@ -160,6 +160,13 @@ object AevixDaemon {
       runCatching { LogcatMonitor.start() }
           .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
     }
+
+    // Warm the module cache while this daemon still has root; later Binder callers use a
+    // bounded wait rather than rebuilding the cache on system_server's transaction thread.
+    ConfigCache.warmUp()
+    if (!ConfigCache.awaitReady(1200L)) {
+      Log.w(TAG, "Module cache is not ready yet; continuing startup")
+    }
     scope.launch {
       FileSystem.getPreloadDex(
           ConfigCache.state.isDexObfuscateEnabled, ConfigCache.state.isApiProtectionEnabled)
