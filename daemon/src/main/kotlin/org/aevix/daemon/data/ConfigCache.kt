@@ -52,7 +52,6 @@ object ConfigCache {
   private val readyLock = ReentrantLock()
   private val readySignal = readyLock.newCondition()
   private val warmUpChannel = Channel<Unit>(Channel.CONFLATED)
-  private const val READY_WAIT_MS = 200L
   private const val GET_MODULES_WAIT_MS = 3000L
 
   // Held for the whole of a rebuild, so cache preparation and cache updates cannot overlap.
@@ -72,17 +71,30 @@ object ConfigCache {
     }
     AevixDaemon.scope.launch {
       for (ignored in warmUpChannel) {
-        runCatching { prepareCache() }
-            .onFailure { Log.e(TAG, "Cache build failed; the next request will try again", it) }
+        var attempts = 0
+        while (!state.isCacheReady && attempts < 20) {
+          runCatching { prepareCache() }
+              .onFailure { Log.e(TAG, "Cache build attempt failed", it) }
+          if (!state.isCacheReady) {
+            attempts++
+            kotlinx.coroutines.delay(250L)
+          }
+        }
+        if (!state.isCacheReady) {
+          Log.e(TAG, "Cache is still not ready after bounded background retries")
+        }
       }
     }
     applySqliteHelperWorkaround()
   }
 
-  private fun ensureCacheReady() {
-    if (state.isCacheReady || packageManager?.asBinder()?.isBinderAlive != true) return
+  private fun ensureCacheReady(): Boolean {
+    if (state.isCacheReady) return true
+    if (packageManager?.asBinder()?.isBinderAlive != true) return false
     warmUp()
-    awaitReady(READY_WAIT_MS)
+    val ready = awaitReady(GET_MODULES_WAIT_MS)
+    if (!ready) Log.w(TAG, "Cache readiness wait timed out; refusing to use an incomplete snapshot")
+    return ready
   }
 
   fun warmUp() {
@@ -189,7 +201,7 @@ object ConfigCache {
   }
 
   fun isManager(uid: Int): Boolean {
-    ensureCacheReady()
+    if (!ensureCacheReady()) return uid == BuildConfig.MANAGER_INJECTED_UID
     return uid == state.managerUid || uid == BuildConfig.MANAGER_INJECTED_UID
   }
 
@@ -532,9 +544,9 @@ object ConfigCache {
       Log.w(TAG, "Skip unexpected module queries for $processName")
       return emptyList()
     }
-    if (!state.isCacheReady) {
-      warmUp()
-      awaitReady(GET_MODULES_WAIT_MS)
+    if (!ensureCacheReady()) {
+      Log.w(TAG, "Returning no modules for $processName/$uid because the cache is not ready")
+      return emptyList()
     }
     return resolveModulesForProcess(state.scopes, processName, uid) ?: emptyList()
   }
@@ -678,7 +690,12 @@ object ConfigCache {
   }
 
   fun shouldSkipProcess(scope: ProcessScope): Boolean {
-    ensureCacheReady()
+    if (!ensureCacheReady()) {
+      // An incomplete scope snapshot must not permanently suppress this process's attach.
+      // The later module query has its own bounded readiness wait.
+      Log.w(TAG, "Not skipping ${scope.processName}/${scope.uid}: cache is not ready")
+      return false
+    }
     return resolveModulesForProcess(state.scopes, scope.processName, scope.uid) == null
   }
 }
