@@ -537,8 +537,9 @@ private fun readDex(
       preloadDexObfuscate = null
       preloadDexApiProtection = null
       runCatching {
-            FileInputStream("framework/aevix.dex").use {
-              preloadDex = readDex(it, obfuscate, apiProtection)
+            val dexFile = File("framework/aevix.dex")
+            FileInputStream(dexFile).use {
+              preloadDex = readDex(it, dexFile.length(), obfuscate, apiProtection)
               preloadDexObfuscate = obfuscate
               preloadDexApiProtection = apiProtection
             }

@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.os.RemoteException
 import android.os.SELinux
 import android.os.SystemProperties
 import android.util.Log
