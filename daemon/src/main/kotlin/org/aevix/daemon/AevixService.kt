@@ -60,13 +60,15 @@ object AevixService : IAevixDaemon.Stub() {
     // Dispatching it on the daemon scope avoids re-entering the Binder thread that delivered
     // this context transaction.
     AevixDaemon.scope.launch {
+      // Complete registration before replaying boot. Both operations run off the Binder callback
+      // thread, and the ordering prevents boot handling from racing receiver installation.
       runCatching { registerReceivers() }
           .onFailure { Log.e(TAG, "Failed to register OS receivers", it) }
-    }
 
-    if (AevixDaemon.startedAfterSystemServer) {
-      Log.i(TAG, "Started after system_server. Forcing boot completed event.")
-      dispatchBootCompleted()
+      if (AevixDaemon.startedAfterSystemServer) {
+        Log.i(TAG, "Started after system_server. Forcing boot completed event.")
+        dispatchBootCompleted()
+      }
     }
   }
 
