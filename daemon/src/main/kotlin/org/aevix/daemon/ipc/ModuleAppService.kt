@@ -26,6 +26,7 @@ import org.aevix.daemon.data.ConfigCache
 import org.aevix.daemon.data.FileSystem
 import org.aevix.daemon.data.ModuleDatabase
 import org.aevix.daemon.data.PreferenceStore
+import org.aevix.daemon.data.isSupportedPreferenceValue
 import org.aevix.daemon.system.NotificationManager
 import org.aevix.daemon.system.ProcessFreezer
 import org.aevix.daemon.system.PER_USER_RANGE
