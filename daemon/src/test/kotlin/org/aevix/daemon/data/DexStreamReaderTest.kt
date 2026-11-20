@@ -17,18 +17,18 @@ class DexStreamReaderTest {
         }
     val destination = ByteBuffer.allocate(5)
 
-    FileSystem.copyExactly(source, destination)
+    copyExactly(source, destination)
 
     assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), destination.array())
   }
 
   @Test(expected = EOFException::class)
   fun rejectsTruncatedDexEntries() {
-    FileSystem.copyExactly(ByteArrayInputStream(byteArrayOf(1, 2)), ByteBuffer.allocate(3))
+    copyExactly(ByteArrayInputStream(byteArrayOf(1, 2)), ByteBuffer.allocate(3))
   }
 
   @Test(expected = IOException::class)
   fun rejectsDexEntriesLongerThanTheirDeclaredSize() {
-    FileSystem.copyExactly(ByteArrayInputStream(byteArrayOf(1, 2, 3)), ByteBuffer.allocate(2))
+    copyExactly(ByteArrayInputStream(byteArrayOf(1, 2, 3)), ByteBuffer.allocate(2))
   }
 }
