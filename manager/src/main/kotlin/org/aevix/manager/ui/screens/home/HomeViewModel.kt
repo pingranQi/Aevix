@@ -3,6 +3,7 @@ import kotlinx.coroutines.CancellationException
 import org.aevix.manager.data.repository.FrameworkUpdateState
 import org.aevix.manager.data.repository.LaunchShortcut
 import org.aevix.manager.data.repository.ManagerInstallStep
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 import org.aevix.ipc.IManagerService
 import org.aevix.manager.data.github.CommunityFeed
 import org.aevix.manager.data.github.GitHubRepository
+import org.aevix.manager.data.model.AppInfo
 import org.aevix.manager.data.model.ManagerCopy
 import org.aevix.manager.di.ServiceLocator
 import org.aevix.manager.ipc.DaemonClient
@@ -160,6 +162,24 @@ data class ManagerPresence(
                 !notificationEnabled
 }
 
+private const val SYSTEM_UI_VIRTUAL_PACKAGE = "system"
+
+data class InlineHookAppOption(
+    val packageName: String,
+    val appName: String,
+    val applicationInfo: ApplicationInfo?,
+)
+
+data class InlineHookInvalidationState(
+    val apps: List<InlineHookAppOption> = emptyList(),
+    val selectedPackages: Set<String> = emptySet(),
+    val savingPackages: Set<String> = emptySet(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val loadFailed: Boolean = false,
+    val saveErrorPackage: String? = null,
+)
+
 data class DeviceInfo(
     val androidRelease: String = Build.VERSION.RELEASE ?: "",
     val sdkInt: Int = Build.VERSION.SDK_INT,
@@ -221,6 +241,9 @@ class HomeViewModel(
 
     private val _inlineHookBackend = MutableStateFlow(IManagerService.INLINE_HOOK_BACKEND_DOBBY)
     val inlineHookBackend: StateFlow<Int> = _inlineHookBackend.asStateFlow()
+
+    private val _inlineHookInvalidation = MutableStateFlow(InlineHookInvalidationState())
+    val inlineHookInvalidation: StateFlow<InlineHookInvalidationState> = _inlineHookInvalidation.asStateFlow()
 
     /**
      * How this manager can be opened, and how it currently is.
@@ -621,6 +644,73 @@ class HomeViewModel(
                     logE("framework: setting API protection to $enabled failed", e)
                 }
         }
+    }
+
+    fun refreshInlineHookInvalidation() {
+        val flow = _inlineHookInvalidation
+        val current = flow.value
+        if (!daemon.isAlive || current.loading || current.savingPackages.isNotEmpty()) return
+        flow.update { it.copy(loading = true, loadFailed = false, saveErrorPackage = null) }
+        viewModelScope.launch {
+            val selectedResult = daemon.getInvalidateArtInlineHookPackages()
+            val selected = selectedResult.getOrNull()?.toSet()
+            if (selected == null) {
+                selectedResult.exceptionOrNull()?.let { logW("framework: compatibility list unavailable", it) }
+                flow.update { it.copy(loading = false, loaded = false, loadFailed = true) }
+                return@launch
+            }
+
+            val installed = runCatching { ServiceLocator.apps.getInstalledApps() }
+                .onFailure { logW("framework: installed apps unavailable", it) }
+                .getOrDefault(emptyList())
+            val byPackage = linkedMapOf<String, AppInfo>()
+            installed.sortedBy { it.userId }.forEach { byPackage.putIfAbsent(it.packageName, it) }
+            val android = byPackage.remove("android")
+            byPackage.remove(SYSTEM_UI_VIRTUAL_PACKAGE)
+            byPackage.remove(org.aevix.manager.BuildConfig.MANAGER_PACKAGE_NAME)
+
+            val options = buildList {
+                add(InlineHookAppOption(SYSTEM_UI_VIRTUAL_PACKAGE, android?.appName.orEmpty(), android?.applicationInfo))
+                byPackage.values.forEach { app ->
+                    add(InlineHookAppOption(app.packageName, app.appName, app.applicationInfo))
+                }
+                val visible = asSequence().map { it.packageName }.toSet()
+                selected.filterNot { it in visible }.forEach { packageName ->
+                    add(InlineHookAppOption(packageName, packageName, null))
+                }
+            }.sortedWith(compareBy<InlineHookAppOption> { it.appName.lowercase() }.thenBy { it.packageName })
+
+            flow.value = InlineHookInvalidationState(
+                apps = options,
+                selectedPackages = selected,
+                loaded = true,
+            )
+        }
+    }
+
+    fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean) {
+        val flow = _inlineHookInvalidation
+        val current = flow.value
+        if (!current.loaded || packageName in current.savingPackages ||
+            (packageName in current.selectedPackages) == enabled) return
+        flow.update { it.copy(savingPackages = it.savingPackages + packageName, saveErrorPackage = null) }
+        viewModelScope.launch {
+            val result = daemon.setInvalidateArtInlineHooks(packageName, enabled)
+            val stored = result.getOrDefault(false)
+            result.exceptionOrNull()?.let { logE("framework: setting ART compatibility for $packageName failed", it) }
+            flow.update { state ->
+                state.copy(
+                    selectedPackages = if (!stored) state.selectedPackages
+                        else if (enabled) state.selectedPackages + packageName else state.selectedPackages - packageName,
+                    savingPackages = state.savingPackages - packageName,
+                    saveErrorPackage = if (stored) null else packageName,
+                )
+            }
+        }
+    }
+
+    fun clearInlineHookSaveError() {
+        _inlineHookInvalidation.update { it.copy(saveErrorPackage = null) }
     }
 
     fun refreshFeed(freshness: GitHubRepository.Freshness) {
