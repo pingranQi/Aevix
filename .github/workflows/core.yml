@@ -130,6 +130,7 @@ jobs:
           unzip -o -q /tmp/ninja.zip -d "$HOME/.local/bin"
           chmod +x "$HOME/.local/bin/ninja"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "NINJA_EXECUTABLE=$HOME/.local/bin/ninja" >> "$GITHUB_ENV"
           "$HOME/.local/bin/ninja" --version
 
       - name: Setup ccache

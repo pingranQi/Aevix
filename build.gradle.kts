@@ -185,7 +185,7 @@ abstract class GitCommitHashValueSource : ValueSource<String, GitCommitHashValue
 
         val repository = parameters.buildRepository.getOrElse("")
         if (repository.isBlank()) {
-            val dirty = capture("git", "status", "--porcelain", "--untracked-files=no") != null
+            val dirty = capture("git", "status", "--porcelain", "--untracked-files=all") != null
             return if (dirty) "$head+${hostname()}" else head
         }
 
@@ -281,7 +281,7 @@ subprojects {
 
             buildFeatures.buildConfig = true
             externalNativeBuild.cmake {
-                version = "3.29.8+"
+                version = "3.30.5"
                 buildStagingDirectory = layout.buildDirectory.get().asFile
             }
 
@@ -289,6 +289,12 @@ subprojects {
             // nested projects such as LSPlant call project() and can re-seed the cache option.
             defaultConfig.externalNativeBuild.cmake {
                 arguments.add("-DCMAKE_CXX_SCAN_FOR_MODULES=OFF")
+                arguments.add("-DCMAKE_CXX_MODULE_STD=OFF")
+                // AGP otherwise selects the NDK-bundled Ninja 1.10.2, which cannot generate
+                // LSPlant C++ module dependencies. CI pins Ninja 1.13.2 explicitly.
+                System.getenv("NINJA_EXECUTABLE")?.let {
+                    arguments.add("-DCMAKE_MAKE_PROGRAM=$it")
+                }
             }
 
             defaultConfig.apply {

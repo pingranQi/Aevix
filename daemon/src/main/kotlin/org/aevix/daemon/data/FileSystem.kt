@@ -17,7 +17,6 @@ import hidden.HiddenApiBridge
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
-import java.nio.channels.Channels
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
@@ -243,25 +242,40 @@ object FileSystem {
   /** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
   private fun readDex(
       inputStream: InputStream,
+      expectedSize: Long,
       obfuscate: Boolean,
       apiProtection: Boolean
   ): SharedMemory {
-    var memory = SharedMemory.create(null, inputStream.available())
-    val byteBuffer = memory.mapReadWrite()
-    Channels.newChannel(inputStream).read(byteBuffer)
-    SharedMemory.unmap(byteBuffer)
-
-    if (obfuscate || apiProtection) {
-      // API protection is an independent switch: it must rewrite Xposed API names even when
-      // general framework-name obfuscation is disabled (for example, in a debug build).
-      val newMemory = ObfuscationManager.obfuscateDex(memory, obfuscate, apiProtection)
-      if (memory !== newMemory) {
-        memory.close()
-        memory = newMemory
-      }
+    require(expectedSize in 1..Int.MAX_VALUE.toLong()) {
+      "Invalid DEX entry size: $expectedSize"
     }
-    memory.setProtect(OsConstants.PROT_READ)
-    return memory
+
+    var memory: SharedMemory? = null
+    try {
+      val allocated = SharedMemory.create(null, expectedSize.toInt())
+      memory = allocated
+      val mapped = allocated.mapReadWrite()
+      try {
+        copyExactly(inputStream, mapped)
+      } finally {
+        SharedMemory.unmap(mapped)
+      }
+
+      if (obfuscate || apiProtection) {
+        // API protection is an independent switch: it must rewrite Xposed API names even when
+        // general framework-name obfuscation is disabled (for example, in a debug build).
+        val previous = checkNotNull(memory)
+        val transformed = ObfuscationManager.obfuscateDex(previous, obfuscate, apiProtection)
+        memory = transformed
+        if (previous !== transformed) previous.close()
+      }
+      val result = checkNotNull(memory)
+      result.setProtect(OsConstants.PROT_READ)
+      return result
+    } catch (failure: Throwable) {
+      runCatching { memory?.close() }
+      throw failure
+    }
   }
 
   /**
@@ -404,7 +418,7 @@ object FileSystem {
               val entryName = if (secondary == 1) "classes.dex" else "classes$secondary.dex"
               val dexEntry = zip.getEntry(entryName) ?: break
               zip.getInputStream(dexEntry).use {
-                preLoadedDexes.add(readDex(it, obfuscate, apiProtection))
+                preLoadedDexes.add(readDex(it, dexEntry.size, obfuscate, apiProtection))
               }
               secondary++
             }
@@ -500,8 +514,9 @@ object FileSystem {
       preloadDexObfuscate = null
       preloadDexApiProtection = null
       runCatching {
-            FileInputStream("framework/aevix.dex").use {
-              preloadDex = readDex(it, obfuscate, apiProtection)
+            val dexFile = File("framework/aevix.dex")
+            FileInputStream(dexFile).use {
+              preloadDex = readDex(it, dexFile.length(), obfuscate, apiProtection)
               preloadDexObfuscate = obfuscate
               preloadDexApiProtection = apiProtection
             }

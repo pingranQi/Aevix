@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.os.RemoteException
 import android.os.SELinux
 import android.os.SystemProperties
 import android.util.Log
@@ -73,6 +74,7 @@ object ManagerService : IManagerService.Stub() {
 
   private var managerIntent: Intent? = null
 
+  @Volatile
   var guard: ManagerGuard? = null
     internal set
 
@@ -93,23 +95,34 @@ object ManagerService : IManagerService.Stub() {
         }
 
     init {
-      ManagerService.guard = this
+      synchronized(ManagerService) { ManagerService.guard = this }
       runCatching {
             binder.linkToDeath(this, 0)
+            if (!binder.isBinderAlive) throw RemoteException("Manager binder died during registration")
             applyXspaceWorkaround(connection)
           }
           .onFailure {
             Log.e(TAG, "ManagerGuard initialization failed", it)
-            ManagerService.guard = null
+            cleanup()
+            clearIfCurrent()
           }
     }
 
-    override fun binderDied() {
-      runCatching {
-        binder.unlinkToDeath(this, 0)
-        activityManager?.unbindService(connection)
+    private fun clearIfCurrent() {
+      synchronized(ManagerService) {
+        if (ManagerService.guard === this) ManagerService.guard = null
       }
-      ManagerService.guard = null
+    }
+
+    private fun cleanup() {
+      runCatching { binder.unlinkToDeath(this, 0) }
+      runCatching { activityManager?.unbindService(connection) }
+    }
+
+    override fun binderDied() {
+      cleanup()
+      // A delayed callback from an older manager must not clear a newer manager's guard.
+      clearIfCurrent()
     }
   }
 

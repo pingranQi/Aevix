@@ -2,10 +2,81 @@ package org.aevix.daemon.data
 
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InvalidClassException
+import java.io.InvalidObjectException
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
+import java.io.ObjectStreamClass
 import org.aevix.daemon.BuildConfig
-import org.apache.commons.lang3.SerializationUtilsX
 
 private const val TAG = "AevixPreferenceStore"
+private const val MAX_PREFERENCE_BLOB_SIZE = 1024 * 1024
+
+private val allowedPreferenceClasses =
+    setOf(
+        "java.lang.Boolean",
+        "java.lang.Float",
+        "java.lang.Integer",
+        "java.lang.Long",
+        "java.lang.Number",
+        "java.lang.String",
+        "java.util.Collections\$EmptySet",
+        "kotlin.collections.EmptySet",
+        "java.util.Collections\$SingletonSet",
+        "java.util.HashSet",
+        "java.util.LinkedHashSet",
+    )
+
+/**
+ * RemotePreferences has SharedPreferences value semantics: scalar primitives, strings and
+ * string sets. Do not invoke arbitrary Serializable implementations in the root daemon.
+ */
+internal fun isSupportedPreferenceValue(value: Any?): Boolean =
+    when (value) {
+      is String, is Boolean, is Int, is Long, is Float -> true
+      is Set<*> -> value.javaClass.name in allowedPreferenceClasses && value.all { it is String }
+      else -> false
+    }
+
+internal fun serializePreferenceValue(value: Any): ByteArray {
+  require(isSupportedPreferenceValue(value)) {
+    "Unsupported remote preference value type: ${value.javaClass.name}"
+  }
+  val bytes = ByteArrayOutputStream()
+  ObjectOutputStream(bytes).use { it.writeObject(value) }
+  return bytes.toByteArray()
+}
+
+internal fun deserializePreferenceValue(blob: ByteArray): Any {
+  if (blob.size > MAX_PREFERENCE_BLOB_SIZE) {
+    throw InvalidObjectException("Remote preference exceeds the size limit")
+  }
+  val value =
+      SafePreferenceObjectInputStream(ByteArrayInputStream(blob)).use { input ->
+        input.readObject()
+      }
+  if (!isSupportedPreferenceValue(value)) {
+    throw InvalidObjectException("Unsupported remote preference value")
+  }
+  return value
+}
+
+private class SafePreferenceObjectInputStream(input: ByteArrayInputStream) :
+    ObjectInputStream(input) {
+  override fun resolveClass(desc: ObjectStreamClass): Class<*> {
+    if (desc.name !in allowedPreferenceClasses) {
+      throw InvalidClassException("Rejected remote preference class", desc.name)
+    }
+    return super.resolveClass(desc)
+  }
+
+  override fun resolveProxyClass(interfaces: Array<out String>): Class<*> {
+    throw InvalidClassException("Serialized proxy classes are not allowed")
+  }
+}
 
 object PreferenceStore {
 
@@ -25,12 +96,15 @@ object PreferenceStore {
             null,
             null,
             null)
-        .use { cursor -> // We only close the cursor
+        .use { cursor ->
           while (cursor.moveToNext()) {
             val key = cursor.getString(0)
             val blob = cursor.getBlob(1)
-            val obj = SerializationUtilsX.deserialize<Any>(blob)
-            if (obj != null) result[key] = obj
+            runCatching { deserializePreferenceValue(blob) }
+                .onSuccess { result[key] = it }
+                .onFailure {
+                  Log.w(TAG, "Ignoring invalid preference $packageName/$userId/$group/$key", it)
+                }
           }
         }
     return result
@@ -45,21 +119,21 @@ object PreferenceStore {
     db.beginTransaction()
     try {
       for ((key, value) in diff) {
-        if (value is java.io.Serializable) {
-          val values =
-              ContentValues().apply {
-                put("`group`", group)
-                put("`key`", key)
-                put("data", SerializationUtilsX.serialize(value))
-                put("module_pkg_name", moduleName)
-                put("user_id", userId.toString())
-              }
-          db.insertWithOnConflict("configs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
-        } else {
+        if (value == null) {
           db.delete(
               "configs",
               "module_pkg_name=? AND user_id=? AND `group`=? AND `key`=?",
               arrayOf(moduleName, userId.toString(), group, key))
+        } else {
+          val values =
+              ContentValues().apply {
+                put("`group`", group)
+                put("`key`", key)
+                put("data", serializePreferenceValue(value))
+                put("module_pkg_name", moduleName)
+                put("user_id", userId.toString())
+              }
+          db.insertWithOnConflict("configs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
         }
       }
       db.setTransactionSuccessful()

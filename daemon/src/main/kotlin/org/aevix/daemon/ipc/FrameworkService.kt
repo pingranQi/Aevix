@@ -69,35 +69,66 @@ object FrameworkService : IFrameworkService.Stub() {
     val targetIds = ConcurrentHashMap<String, Long>()
 
     @Volatile var hotReloadBinder: IProcessChannel? = null
+    @Volatile var dead = false
+      private set
 
-    init {
-      heartBeat.linkToDeath(this, 0)
-      processes[key] = this
+    /** Link first, then publish atomically and verify that the binder is still alive. */
+    fun register(): Boolean {
+      try {
+        heartBeat.linkToDeath(this, 0)
+      } catch (_: RemoteException) {
+        return false
+      }
+
+      if (!heartBeat.isBinderAlive) {
+        runCatching { heartBeat.unlinkToDeath(this, 0) }
+        return false
+      }
+      if (processes.putIfAbsent(key, this) != null) {
+        runCatching { heartBeat.unlinkToDeath(this, 0) }
+        return false
+      }
+      if (!heartBeat.isBinderAlive || dead) {
+        processes.remove(key, this)
+        runCatching { heartBeat.unlinkToDeath(this, 0) }
+        return false
+      }
+      return true
     }
 
     override fun binderDied() {
-      heartBeat.unlinkToDeath(this, 0)
-      processes.remove(key)
-      targetIds.values.forEach { hotReloadTargets.remove(it) }
+      synchronized(this) {
+        dead = true
+        // Identity-aware removal cannot delete a newer process reusing this (uid, pid).
+        processes.remove(key, this)
+        targetIds.values.forEach { hotReloadTargets.remove(it) }
+        targetIds.clear()
+      }
+      runCatching { heartBeat.unlinkToDeath(this, 0) }
     }
   }
 
   private fun recordHotReloadTargets(info: ProcessInfo, modules: List<LoadedModule>) {
-    for (module in modules) {
-      info.targetIds.computeIfAbsent(module.packageName) {
-        val id = nextHotReloadTargetId.getAndIncrement()
-        hotReloadTargets[id] =
-            HotReloadTarget(
-                id = id,
-                modulePackageName = module.packageName,
-                processName = info.processName,
-                uid = info.key.uid,
-                pid = info.key.pid,
-                loadedVersionCode = module.versionCode,
-                // Hot reload is specified only for modules with exactly one Java entry class.
-                hotReloadable = module.code.moduleClassNames.size == 1,
-            )
-        id
+    // Keep target publication atomic with binderDied() so death cannot drain the map
+    // immediately before a new target is inserted.
+    synchronized(info) {
+      if (info.dead || processes[info.key] !== info) return
+      for (module in modules) {
+        info.targetIds.computeIfAbsent(module.packageName) {
+          val id = nextHotReloadTargetId.getAndIncrement()
+          hotReloadTargets[id] =
+              HotReloadTarget(
+                  id = id,
+                  modulePackageName = module.packageName,
+                  processName = info.processName,
+                  uid = info.key.uid,
+                  pid = info.key.pid,
+                  loadedVersionCode = module.versionCode,
+                  // Hot reload is specified only for modules with exactly one Java entry class.
+                  hotReloadable = module.code.moduleClassNames.size == 1,
+              )
+          id
+        }
       }
     }
   }
@@ -193,8 +224,10 @@ object FrameworkService : IFrameworkService.Stub() {
    * way a dead one does, and reporting that as PROCESS_DIED would be a lie the module app has no
    * way to check.
    */
-  fun isProcessRegistered(target: HotReloadTarget): Boolean =
-      processes.containsKey(ProcessKey(target.uid, target.pid))
+  fun isProcessRegistered(target: HotReloadTarget): Boolean {
+    val info = processes[ProcessKey(target.uid, target.pid)] ?: return false
+    return !info.dead && info.targetIds[target.modulePackageName] == target.id
+  }
 
   // Reloads are serialized per target, so check and transition must be one atomic step.
   fun beginHotReload(target: HotReloadTarget): Boolean {
@@ -210,8 +243,12 @@ object FrameworkService : IFrameworkService.Stub() {
     target.state.set(state)
   }
 
-  fun getHotReloadBinder(target: HotReloadTarget): IProcessChannel? =
-      processes[ProcessKey(target.uid, target.pid)]?.hotReloadBinder
+  fun getHotReloadBinder(target: HotReloadTarget): IProcessChannel? {
+    val info = processes[ProcessKey(target.uid, target.pid)] ?: return null
+    return info.takeIf {
+      !it.dead && it.targetIds[target.modulePackageName] == target.id
+    }?.hotReloadBinder
+  }
 
   override fun attachProcessChannel(channel: IProcessChannel) {
     // Synchronous on purpose: a oneway transaction arrives with getCallingPid() == 0, and this
@@ -277,14 +314,17 @@ object FrameworkService : IFrameworkService.Stub() {
   }
 
   fun registerHeartBeat(uid: Int, pid: Int, processName: String, heartBeat: IBinder): Boolean {
-    return runCatching {
-          ProcessInfo(ProcessKey(uid, pid), processName, heartBeat)
-          true
-        }
-        .getOrDefault(false)
+    val info = ProcessInfo(ProcessKey(uid, pid), processName, heartBeat)
+    return runCatching { info.register() }.getOrDefault(false)
   }
 
-  fun hasRegister(uid: Int, pid: Int): Boolean = processes.containsKey(ProcessKey(uid, pid))
+  fun hasRegister(uid: Int, pid: Int): Boolean {
+    val key = ProcessKey(uid, pid)
+    val info = processes[key] ?: return false
+    if (!info.dead && info.heartBeat.isBinderAlive) return true
+    info.binderDied()
+    return false
+  }
 
   private fun ensureRegistered(): ProcessInfo {
     val key = ProcessKey(getCallingUid(), getCallingPid())
