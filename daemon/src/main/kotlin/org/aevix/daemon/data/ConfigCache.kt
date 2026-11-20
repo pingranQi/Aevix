@@ -10,6 +10,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
+import java.util.concurrent.locks.ReentrantLock
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import org.aevix.ipc.IManagerService
@@ -48,10 +49,13 @@ object ConfigCache {
 
   private val cacheUpdateChannel = Channel<Unit>(Channel.CONFLATED)
 
-  // Held for the whole of a rebuild, so that only one runs at a time. The channel serialises the
-  // requests that arrive through it, but not the rebuild the readiness latch starts directly on a
-  // binder thread — two could run at once, read the database in different orders, and whichever
-  // reached the swap last would publish a module set assembled from a half-written configuration.
+  private val readyLock = ReentrantLock()
+  private val readySignal = readyLock.newCondition()
+  private val warmUpChannel = Channel<Unit>(Channel.CONFLATED)
+  private const val READY_WAIT_MS = 200L
+  private const val GET_MODULES_WAIT_MS = 3000L
+
+  // Held for the whole of a rebuild, so cache preparation and cache updates cannot overlap.
   private val rebuildLock = Any()
 
   init {
@@ -66,23 +70,55 @@ object ConfigCache {
             .onFailure { Log.e(TAG, "Cache update failed; the next request will try again", it) }
       }
     }
+    AevixDaemon.scope.launch {
+      for (ignored in warmUpChannel) {
+        runCatching { prepareCache() }
+            .onFailure { Log.e(TAG, "Cache build failed; the next request will try again", it) }
+      }
+    }
     applySqliteHelperWorkaround()
   }
 
   private fun ensureCacheReady() {
-    if (!state.isCacheReady && packageManager?.asBinder()?.isBinderAlive == true) {
-      // The rebuild lock, not `this`: this is the one place that starts a rebuild without going
-      // through the channel, so it has to queue behind a rebuild already in flight rather than
-      // merely behind the short swaps that publish one.
-      synchronized(rebuildLock) {
-        if (!state.isCacheReady) {
-          Log.i(TAG, "System services are ready. Mapping modules and scopes.")
-          updateManager(false)
-          setupMiscPath()
-          state = state.copy(isApiProtectionEnabled = PreferenceStore.isApiProtectionEnabled())
-          performCacheUpdate()
-          synchronized(this) { state = state.copy(isCacheReady = true) }
-        }
+    if (state.isCacheReady || packageManager?.asBinder()?.isBinderAlive != true) return
+    warmUp()
+    awaitReady(READY_WAIT_MS)
+  }
+
+  fun warmUp() {
+    if (!state.isCacheReady) warmUpChannel.trySend(Unit)
+  }
+
+  fun awaitReady(timeoutMs: Long): Boolean {
+    if (state.isCacheReady) return true
+    var leftNanos = timeoutMs * 1_000_000L
+    readyLock.lock()
+    try {
+      while (!state.isCacheReady) {
+        if (leftNanos <= 0L) return false
+        leftNanos = runCatching { readySignal.awaitNanos(leftNanos) }.getOrNull() ?: return false
+      }
+    } finally {
+      readyLock.unlock()
+    }
+    return true
+  }
+
+  private fun prepareCache() {
+    if (state.isCacheReady || packageManager?.asBinder()?.isBinderAlive != true) return
+    synchronized(rebuildLock) {
+      if (state.isCacheReady) return
+      Log.i(TAG, "System services are ready. Mapping modules and scopes.")
+      updateManager(false)
+      setupMiscPath()
+      state = state.copy(isApiProtectionEnabled = PreferenceStore.isApiProtectionEnabled())
+      performCacheUpdate()
+      synchronized(this) { state = state.copy(isCacheReady = true) }
+      readyLock.lock()
+      try {
+        readySignal.signalAll()
+      } finally {
+        readyLock.unlock()
       }
     }
   }
@@ -492,10 +528,13 @@ object ConfigCache {
   }
 
   fun getModulesForProcess(processName: String, uid: Int): List<LoadedModule> {
-    ensureCacheReady()
     if (processName == "system_server") {
       Log.w(TAG, "Skip unexpected module queries for $processName")
       return emptyList()
+    }
+    if (!state.isCacheReady) {
+      warmUp()
+      awaitReady(GET_MODULES_WAIT_MS)
     }
     return resolveModulesForProcess(state.scopes, processName, uid) ?: emptyList()
   }
