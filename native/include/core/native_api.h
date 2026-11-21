@@ -120,7 +120,20 @@ inline void SetInlineHookBackend(int backend) {
 inline std::once_flag g_shadowhook_init_once;
 inline int g_shadowhook_init_result = -1;
 inline std::mutex g_shadowhook_mutex;
-inline std::map<uintptr_t, void *> g_shadowhook_stubs;
+
+enum class InlineHookEngine : uint8_t {
+    Dobby,
+    ShadowHook,
+};
+
+struct InlineHookRecord {
+    InlineHookEngine engine;
+    void *shadowhook_stub = nullptr;
+};
+
+// Keep a LIFO record for every successful installation. The public Unhook API identifies a
+// hook by target address only, so LIFO mirrors the order in which stacked hooks are removed.
+inline std::map<uintptr_t, std::vector<InlineHookRecord>> g_inline_hook_records;
 
 inline bool ShadowHookInit() {
     std::call_once(g_shadowhook_init_once, [] {
@@ -162,46 +175,76 @@ void RegisterNativeLib(const std::string &library_name);
 /** A wrapper around the configured inline hook backend. */
 inline int HookInline(void *original, void *replace, void **backup) {
 #if defined(__aarch64__) || defined(__arm__)
-    if (g_inline_hook_backend.load(std::memory_order_relaxed) == kInlineHookBackendShadowHook &&
-        ShadowHookInit()) {
+    const bool shadowhook_selected =
+        g_inline_hook_backend.load(std::memory_order_relaxed) == kInlineHookBackendShadowHook;
+    if (shadowhook_selected && ShadowHookInit()) {
+        // Serialize hook/unhook operations and preserve the backend for this exact installation.
+        // Unique mode deliberately rejects duplicate targets. Do not stack a Dobby hook on top of
+        // an existing ShadowHook entry when that happens: the two engines cannot safely share the
+        // same patched instructions or trampoline lifetime.
+        std::lock_guard<std::mutex> lock(g_shadowhook_mutex);
         LogInlineHook(kInlineHookBackendShadowHook, original, true);
         void *stub = shadowhook_hook_func_addr(original, replace, backup);
-        if (stub != nullptr) {
-            std::lock_guard<std::mutex> lock(g_shadowhook_mutex);
-            g_shadowhook_stubs[reinterpret_cast<uintptr_t>(original)] = stub;
-            return 0;
+        if (stub == nullptr) {
+            LOGE("ShadowHook failed for %p: %s",
+                 original, shadowhook_to_errmsg(shadowhook_get_errno()));
+            return -1;
         }
-        LOGE("ShadowHook failed for %p: %s; falling back to Dobby",
-             original, shadowhook_to_errmsg(shadowhook_get_errno()));
+        g_inline_hook_records[reinterpret_cast<uintptr_t>(original)].push_back(
+            {InlineHookEngine::ShadowHook, stub});
+        return 0;
     }
 #endif
+
+    // Dobby is the configured backend, or the fallback when ShadowHook itself could not
+    // initialize. A runtime ShadowHook hook failure is not a backend initialization failure and
+    // must not silently fall through to Dobby.
     LogInlineHook(kInlineHookBackendDobby, original, true);
-    return DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
-                     reinterpret_cast<dobby_dummy_func_t *>(backup));
+    const int result = DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
+                                 reinterpret_cast<dobby_dummy_func_t *>(backup));
+#if defined(__aarch64__) || defined(__arm__)
+    if (result == 0) {
+        std::lock_guard<std::mutex> lock(g_shadowhook_mutex);
+        g_inline_hook_records[reinterpret_cast<uintptr_t>(original)].push_back(
+            {InlineHookEngine::Dobby, nullptr});
+    }
+#endif
+    return result;
 }
 
 /** A wrapper around the configured inline hook backend. */
 inline int UnhookInline(void *original) {
 #if defined(__aarch64__) || defined(__arm__)
-    void *stub = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_shadowhook_mutex);
-        auto it = g_shadowhook_stubs.find(reinterpret_cast<uintptr_t>(original));
-        if (it != g_shadowhook_stubs.end()) {
-            stub = it->second;
-            g_shadowhook_stubs.erase(it);
+        auto it = g_inline_hook_records.find(reinterpret_cast<uintptr_t>(original));
+        if (it != g_inline_hook_records.end() && !it->second.empty()) {
+            const InlineHookRecord record = it->second.back();
+            int result = -1;
+            if (record.engine == InlineHookEngine::ShadowHook) {
+                result = shadowhook_unhook(record.shadowhook_stub);
+                if (result == 0) {
+                    LogInlineHook(kInlineHookBackendShadowHook, original, false);
+                } else {
+                    LOGE("ShadowHook unhook failed for %p: %s; retaining stub for retry",
+                         original, shadowhook_to_errmsg(shadowhook_get_errno()));
+                }
+            } else {
+                LogInlineHook(kInlineHookBackendDobby, original, false);
+                result = DobbyDestroy(original);
+            }
+
+            // Keep the exact backend/stub record when teardown fails. Removing it early would
+            // make a retry dispatch to the wrong hook engine and lose ShadowHook's only handle.
+            if (result == 0) {
+                it->second.pop_back();
+                if (it->second.empty()) g_inline_hook_records.erase(it);
+            }
+            return result;
         }
-    }
-    if (stub != nullptr) {
-        if (shadowhook_unhook(stub) == 0) {
-            LogInlineHook(kInlineHookBackendShadowHook, original, false);
-            return 0;
-        }
-        LOGE("ShadowHook unhook failed for %p: %s",
-             original, shadowhook_to_errmsg(shadowhook_get_errno()));
-        return -1;
     }
 #endif
+    // Compatibility for hooks installed before backend bookkeeping was introduced.
     LogInlineHook(kInlineHookBackendDobby, original, false);
     return DobbyDestroy(original);
 }
