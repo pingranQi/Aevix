@@ -216,7 +216,8 @@ object ConfigCache {
   /** Builds a completely new Immutable State and atomically swaps it. */
   private fun performCacheUpdate(): Boolean {
     synchronized(rebuildLock) {
-      if (packageManager == null) return false
+      val packageManagerBinder = packageManager?.asBinder() ?: return false
+      if (!packageManagerBinder.isBinderAlive) return false
 
       Log.d(TAG, "Executing Cache Update...")
       val oldState = state
@@ -499,6 +500,14 @@ object ConfigCache {
               }
             }
           }
+
+      // The package-manager snapshot is only trustworthy if the same Binder is still alive.
+      // If it died halfway through the per-user walk, every lookup may have looked like an
+      // uninstalled package; publishing that empty result would erase the last known-good cache.
+      if (packageManager?.asBinder() !== packageManagerBinder || !packageManagerBinder.isBinderAlive) {
+        Log.w(TAG, "Package manager died or changed during cache rebuild; preserving previous snapshot")
+        return false
+      }
 
       // --- ATOMIC STATE SWAP ---
       //
