@@ -583,6 +583,12 @@ object FileSystem {
             val stamp = "${apk.length()}:${apk.lastModified()}:${BuildConfig.VERSION_CODE}"
             val stampFile = dir.resolve(".stamp").toFile()
             if (stampFile.isFile && stampFile.readText() == stamp) return@runCatching dir.toString()
+          // Collected while the stream is open, deleted after it closes: `Files.list` is lazy, and
+          // removing entries from the directory it is still walking asks the filesystem to hand
+          // back names it no longer has.
+          val stale = mutableListOf<Path>()
+            stream.filter { it.fileName.toString() !in keep }.forEach { stale.add(it) }
+          stale.forEach { it.toFile().deleteRecursively() }
 
             val abis =
                 if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS else Build.SUPPORTED_32_BIT_ABIS
