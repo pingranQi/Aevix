@@ -56,16 +56,6 @@ object AevixService : IAevixDaemon.Stub() {
     appThread?.let { SystemContext.appThread = IApplicationThread.Stub.asInterface(it) }
     SystemContext.token = activityToken
 
-    // Registration is nine binder calls into this very system_server, made on a transaction that
-    // system_server is itself blocked in: it hands us its context and waits for the answer. Eight of
-    // the nine ask ActivityManagerService or the UID observer registry, both of which answer on a
-    // binder thread system_server has to find first. Doing that here therefore has a failure mode
-    // with no good ending -- a full binder pool turns the wait into the watchdog.
-    //
-    // Nothing reads one of these receivers during a fork, so the transaction does not have to
-    // finish before they exist. Off it goes.
-          .onFailure { Log.e(TAG, "Failed to register the OS receivers", it) }
-    }
     // Receiver registration performs synchronous Binder calls back into system_server.
     // Dispatching it on the daemon scope avoids re-entering the Binder thread that delivered
     // this context transaction.
@@ -88,8 +78,6 @@ object AevixService : IAevixDaemon.Stub() {
       processName: String,
       heartBeat: IBinder
   ): IFrameworkService? {
-    // The gate is the kernel's answer, not the parcel's. The arguments are still read by the
-    // caller and are still used below, so they are checked against it rather than trusted.
     val callerUid = Binder.getCallingUid()
     val callerPid = Binder.getCallingPid()
     if (callerUid != 1000) {
