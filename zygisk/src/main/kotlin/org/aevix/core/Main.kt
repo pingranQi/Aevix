@@ -50,6 +50,48 @@ object Main {
             // Exempt the manager host from GrapheneOS DCL restriction; no-op on other systems.
             runCatching { GrapheneDclHooker.start() }
                 .onFailure { Utils.logE("GrapheneOS DCL exemption failed", it) }
+
+            // Independent fallback: some ROMs miss the ZygoteInit hook that normally delivers
+            // system-server initialization. Once ActivityManager is registered, its binder class
+            // loader can resolve the system-server window-manager classes. initSystemServer is
+            // synchronized and idempotent, so the normal route and this fallback cannot double-init.
+            Thread {
+                    val deadline = android.os.SystemClock.elapsedRealtime() + 60_000L
+                    while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                        if (org.aevix.impl.hookers.HandleSystemServerProcessHooker
+                                .systemServerCL != null
+                        ) {
+                            android.util.Log.i("AevixDiag", "system-server init already completed")
+                            break
+                        }
+                        val classLoader =
+                            runCatching {
+                                    android.os.ServiceManager.getService("activity")
+                                        ?.javaClass
+                                        ?.classLoader
+                                }
+                                .getOrNull()
+                        if (classLoader != null) {
+                            android.util.Log.i("AevixDiag", "fallback system-server init using $classLoader")
+                            runCatching {
+                                    org.aevix.impl.hookers.HandleSystemServerProcessHooker
+                                        .initSystemServer(classLoader, isLate = false)
+                                }
+                                .onFailure {
+                                    android.util.Log.e("AevixDiag", "fallback system-server init failed", it)
+                                }
+                            break
+                        }
+                        try {
+                            Thread.sleep(250L)
+                        } catch (interrupted: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                    }
+                }
+                .apply { isDaemon = true; name = "aevix-sysinit-fallback" }
+                .start()
         }
 
         // Initialize Xposed bridge components
