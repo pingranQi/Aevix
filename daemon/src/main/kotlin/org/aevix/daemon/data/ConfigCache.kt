@@ -125,7 +125,10 @@ object ConfigCache {
       updateManager(false)
       setupMiscPath()
       state = state.copy(isApiProtectionEnabled = PreferenceStore.isApiProtectionEnabled())
-      performCacheUpdate()
+      if (!performCacheUpdate()) {
+        Log.w(TAG, "Cache build was deferred because system services are not ready")
+        return
+      }
       synchronized(this) { state = state.copy(isCacheReady = true) }
       readyLock.lock()
       try {
@@ -211,9 +214,9 @@ object ConfigCache {
   }
 
   /** Builds a completely new Immutable State and atomically swaps it. */
-  private fun performCacheUpdate() {
+  private fun performCacheUpdate(): Boolean {
     synchronized(rebuildLock) {
-      if (packageManager == null) return
+      if (packageManager == null) return false
 
       Log.d(TAG, "Executing Cache Update...")
       val oldState = state
@@ -245,7 +248,7 @@ object ConfigCache {
       val users = if (enabledRows.isEmpty()) emptyList() else userManager?.getRealUsers() ?: emptyList()
       if (enabledRows.isNotEmpty() && users.isEmpty()) {
         Log.w(TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
-        return
+        return false
       }
 
       enabledRows.forEach { row ->
@@ -529,6 +532,7 @@ object ConfigCache {
 
       // Ask stale opt-in targets to load the generation that was just installed.
       newModules.values.forEach { ModuleAppService.autoHotReload(it) }
+      true
       // Log.d(TAG, "cached modules:")
       // newModules.forEach { (pkg, mod) -> Log.d(TAG, "$pkg ${mod.apkPath}") }
 
