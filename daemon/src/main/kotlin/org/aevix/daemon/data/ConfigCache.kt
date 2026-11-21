@@ -396,6 +396,10 @@ object ConfigCache {
         }
       }
 
+        val pkgInfo =
+            packageManager?.getPackageInfoWithComponents(appPkg, MATCH_ALL_FLAGS, userId)
+                ?: return@forEach
+        val appInfo = pkgInfo.applicationInfo ?: return@forEach
       if (packageManager?.asBinder()?.isBinderAlive == true) {
         obsoleteModules.forEach { ModuleDatabase.removeModule(it) }
         obsoletePaths.forEach { (pkg, path) -> ModuleDatabase.updateModuleApkPath(pkg, path, true) }
@@ -411,6 +415,7 @@ object ConfigCache {
         }
       }
 
+        val appUid = appInfo.uid
       val newScopes = mutableMapOf<ProcessScope, MutableList<LoadedModule>>()
 
       // A module can reach the same process by more than one route: self rows in two users each
