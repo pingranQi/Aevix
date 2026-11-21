@@ -1,6 +1,6 @@
 # Xposed API implementation of the Aevix framework
 
-This module implements the [libxposed](https://github.com/JingMatrix/libxposed-api) API for the Aevix framework. It serves as the primary bridge between the native ART hooking engine (`lsplant`) and module developers, providing a type-safe, OkHttp-style interceptor chain architecture.
+This module implements the [libxposed](https://github.com/libxposed/api) API for the Aevix framework. It serves as the primary bridge between the native ART hooking engine (`lsplant`) and module developers, providing a type-safe, OkHttp-style interceptor chain architecture.
 
 ## Architectural Overview
 

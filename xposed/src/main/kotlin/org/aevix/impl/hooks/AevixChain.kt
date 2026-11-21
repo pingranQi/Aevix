@@ -4,6 +4,7 @@ import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.ExceptionMode
 import io.github.libxposed.api.XposedInterface.Hooker
 import java.lang.reflect.Executable
+import java.lang.reflect.Modifier
 import java.util.Collections
 import org.aevix.util.Utils
 
@@ -66,10 +67,24 @@ class AevixChain(
 
     override fun proceed(currentArgs: Array<Any?>): Any? = internalProceed(thisObj, currentArgs)
 
-    override fun proceedWith(thisObject: Any): Any? = internalProceed(thisObject, args)
+    override fun proceedWith(thisObject: Any): Any? =
+        internalProceed(validateProceedWithReceiver(thisObject), args)
 
     override fun proceedWith(thisObject: Any, currentArgs: Array<Any?>): Any? =
-        internalProceed(thisObject, currentArgs)
+        internalProceed(validateProceedWithReceiver(thisObject), currentArgs)
+
+    /**
+     * API 102 defines proceedWith as changing only the receiver of this executable's chain.
+     * Reject invalid receivers before any downstream interceptor can observe them, and reject
+     * static methods because they have no receiver to replace.
+     */
+    private fun validateProceedWithReceiver(thisObject: Any): Any {
+        if (Modifier.isStatic(executable.modifiers)) {
+            throw IllegalArgumentException("proceedWith cannot be used with static executable $executable")
+        }
+        return AevixInvocation.checkReceiver(executable, false, thisObject)
+            ?: throw IllegalArgumentException("proceedWith requires a receiver for $executable")
+    }
 
     private fun internalProceed(thisObject: Any?, currentArgs: Array<Any?>): Any? {
         proceedCalled = true
