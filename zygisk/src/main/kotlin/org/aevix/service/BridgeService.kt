@@ -174,6 +174,12 @@ object BridgeService {
                                             " for $processName; starting it unhooked",
                                     )
                                     null
+                                } catch (interrupted: InterruptedException) {
+                                    pending.cancel(true)
+                                    attachCalls.purge()
+                                    Thread.currentThread().interrupt()
+                                    Log.w(TAG, "Interrupted while waiting for daemon attach of $processName")
+                                    null
                                 }
                             } catch (rejected: RejectedExecutionException) {
                                 Log.w(TAG, "Bridge attach capacity exhausted; skipping $processName")
