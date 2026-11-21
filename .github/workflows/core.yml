@@ -66,6 +66,7 @@ jobs:
           c++ -std=c++20 -Wall -Wextra -Werror -Inative/include native/tests/test_inline_hook_registry.cpp -o /tmp/aevix-inline-hook-registry
           /tmp/aevix-inline-hook-registry
           python3 native/tests/test_inline_hook_backend_contract.py
+          python3 native/tests/test_art_invalidation_rollback.py
 
       - name: Test module hot-reload generation handoff
         run: python3 xposed/tests/test_hot_reload_generation_contract.py

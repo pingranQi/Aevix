@@ -41,6 +41,14 @@ struct LibArtSnapshotResult {
     std::vector<PreservedExecutablePage> modified_pages;
 };
 
+struct ExecutableSegmentRollback {
+    uintptr_t address = 0;
+    size_t size = 0;
+    off_t file_offset = 0;
+    int protection = 0;
+    std::vector<uint8_t> bytes;
+};
+
 std::vector<PreservedExecutablePage> g_preserved_art_pages;
 
 bool IsLibArtPath(const char *path) {
@@ -233,6 +241,27 @@ bool RestorePreservedPages(uintptr_t mapping_start, uintptr_t mapping_end, int o
     return success;
 }
 
+bool RollbackExecutableSegment(const ExecutableSegmentRollback &segment, int fd) {
+    // Recreate the original file-backed VMA first, then restore the exact pre-invalidation bytes.
+    // This includes third-party patches captured before Aevix installed its own ART hooks.
+    void *mapping = mmap(reinterpret_cast<void *>(segment.address), segment.size,
+                         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd,
+                         segment.file_offset);
+    if (mapping == MAP_FAILED) {
+        PLOGE("Failed to recreate original libart mapping at {} during rollback",
+              reinterpret_cast<void *>(segment.address));
+        return false;
+    }
+    std::memcpy(mapping, segment.bytes.data(), segment.size);
+    __builtin___clear_cache(reinterpret_cast<char *>(segment.address),
+                            reinterpret_cast<char *>(segment.address + segment.size));
+    if (mprotect(mapping, segment.size, segment.protection) != 0) {
+        PLOGE("Failed to restore libart protection at {} during rollback",
+              reinterpret_cast<void *>(segment.address));
+        return false;
+    }
+    return true;
+}
 bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &result) {
     const char *path = info->dlpi_name;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -266,6 +295,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
 
     bool success = true;
     const auto *clean_file = static_cast<const uint8_t *>(file_map);
+    std::vector<ExecutableSegmentRollback> applied_segments;
 
     for (ElfW(Half) i = 0; i < info->dlpi_phnum; ++i) {
         const ElfW(Phdr) &phdr = info->dlpi_phdr[i];
@@ -278,7 +308,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (file_offset > file_size || segment_size > file_size - file_offset) {
             LOGE("Executable libart segment {} exceeds backing file bounds", i);
             success = false;
-            continue;
+            break;
         }
 
         const uintptr_t segment_start =
@@ -286,7 +316,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (segment_size > UINTPTR_MAX - segment_start) {
             LOGE("Executable libart segment {} address range overflows", i);
             success = false;
-            continue;
+            break;
         }
         const uintptr_t segment_end = segment_start + segment_size;
         if (!SegmentContainsTrackedTarget(segment_start, segment_end)) continue;
@@ -297,7 +327,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (file_offset < first_page_prefix) {
             LOGE("Executable libart segment {} has an invalid page-aligned file offset", i);
             success = false;
-            continue;
+            break;
         }
         const size_t first_page_file_offset = file_offset - first_page_prefix;
 
@@ -340,20 +370,20 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (mapping_span > SIZE_MAX - page_mask) {
             LOGE("Executable libart segment {} mapping size overflows", i);
             success = false;
-            continue;
+            break;
         }
         const size_t mapping_size = (mapping_span + page_mask) & ~page_mask;
         if (mapping_size > UINTPTR_MAX - mapping_start) {
             LOGE("Executable libart segment {} aligned address range overflows", i);
             success = false;
-            continue;
+            break;
         }
         const uintptr_t mapping_end = mapping_start + mapping_size;
         if (first_page_file_offset > file_size ||
             mapping_size > file_size - first_page_file_offset) {
             LOGE("Executable libart segment {} aligned mapping exceeds backing file bounds", i);
             success = false;
-            continue;
+            break;
         }
 
         // Verify that pre-Aevix modifications in this segment can be rewritten before replacing
@@ -361,9 +391,16 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         if (!PreparePreservedPagesForRewrite(mapping_start, mapping_end, original_protection,
                                              page_size)) {
             success = false;
-            continue;
+            break;
         }
 
+        ExecutableSegmentRollback rollback;
+        rollback.address = mapping_start;
+        rollback.size = mapping_size;
+        rollback.file_offset = static_cast<off_t>(first_page_file_offset);
+        rollback.protection = original_protection;
+        const auto *original_bytes = reinterpret_cast<const uint8_t *>(mapping_start);
+        rollback.bytes.assign(original_bytes, original_bytes + mapping_size);
         void *mapped = mmap(reinterpret_cast<void *>(mapping_start), mapping_size,
                             original_protection, MAP_PRIVATE | MAP_FIXED, fd,
                             static_cast<off_t>(first_page_file_offset));
@@ -371,16 +408,31 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             PLOGE("Failed to invalidate executable libart segment {} at {} from backing offset {}",
                   i, reinterpret_cast<void *>(mapping_start), first_page_file_offset);
             success = false;
-            continue;
+            break;
         }
+        applied_segments.emplace_back(std::move(rollback));
         if (!RestorePreservedPages(mapping_start, mapping_end, original_protection, page_size)) {
             success = false;
-            continue;
+            break;
         }
         __builtin___clear_cache(reinterpret_cast<char *>(mapping_start),
                                 reinterpret_cast<char *>(mapping_end));
         result.modified_pages += segment_modified_pages;
         result.restored_bytes += segment_restored_bytes;
+    }
+
+    if (!success) {
+        bool rollback_success = true;
+        for (auto it = applied_segments.rbegin(); it != applied_segments.rend(); ++it) {
+            if (!RollbackExecutableSegment(*it, fd)) rollback_success = false;
+        }
+        if (!rollback_success) {
+            LOGE("ART invalidation failed and at least one executable segment could not be rolled back");
+        } else {
+            result.modified_pages = 0;
+            result.restored_bytes = 0;
+            LOGW("ART invalidation failed; all previously replaced executable segments were rolled back");
+        }
     }
 
     munmap(file_map, file_size);
