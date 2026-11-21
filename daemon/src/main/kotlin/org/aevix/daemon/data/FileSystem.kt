@@ -328,6 +328,10 @@ object FileSystem {
 
     val preLoadedApk = ModuleCode()
     val preLoadedDexes = mutableListOf<SharedMemory>()
+    // Every failure below hands back a ModuleLoad the caller cannot clean up from: a SharedMemory
+    // is a memfd plus a mapping, and this local list holds the only reference to them. Returning
+    // without closing leaks one descriptor and one mapping per DEX that had already been read -
+    // and a module that fails once fails on every process start, so those add up.
 
     // DEX handles are locally owned until the complete ModuleCode is returned.
     // Any parse/read failure must release handles already acquired.
