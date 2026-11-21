@@ -902,7 +902,13 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     }
 
     // Resolve and validate every JNI class/array before passing it to another JNI call.
-    jclass obj_class = env->FindClass("java/lang/Object");
+    // Resolved once rather than on every call. This runs for every hit on a hooked method, and
+    // `FindClass` is a lookup through the class loader; two of those plus a throwaway array, for a
+    // snapshot that is usually a handful of entries long, was the most expensive part of it.
+    static jclass obj_class =
+        static_cast<jclass>(env->NewGlobalRef(env->FindClass("java/lang/Object")));
+    static jclass obj_array_class =
+        static_cast<jclass>(env->NewGlobalRef(env->FindClass("[Ljava/lang/Object;")));
     if (obj_class == nullptr || env->ExceptionCheck()) {
         if (obj_class != nullptr) env->DeleteLocalRef(obj_class);
         throw_if_no_exception("java/lang/IllegalStateException",
@@ -911,7 +917,6 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
     }
 
     // Construct the result array Object[2][] using an actual Object[] instance.
-    jobjectArray dummy_array = env->NewObjectArray(0, obj_class, nullptr);
     if (dummy_array == nullptr || env->ExceptionCheck()) {
         if (dummy_array != nullptr) env->DeleteLocalRef(dummy_array);
         env->DeleteLocalRef(obj_class);
@@ -919,7 +924,6 @@ AEVIX_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jclass callb
                               "cannot allocate callback snapshot type probe");
         return nullptr;
     }
-    jclass obj_array_class = env->GetObjectClass(dummy_array);
     if (obj_array_class == nullptr || env->ExceptionCheck()) {
         if (obj_array_class != nullptr) env->DeleteLocalRef(obj_array_class);
         env->DeleteLocalRef(dummy_array);
