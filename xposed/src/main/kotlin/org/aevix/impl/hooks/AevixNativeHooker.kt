@@ -254,6 +254,7 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
                 "Hook returned null for primitive ${returnType.name} on $method; using the default value"
             )
             return defaultValueOf(returnType)
+        }
 
         // Use the JNI bridge for the most reliable type check across ClassLoaders
         if (HookBridge.instanceOf(result, returnType) || isBoxingCompatible(result, returnType)) {
