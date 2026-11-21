@@ -63,7 +63,7 @@ static std::string GetXResourcesClassName() {
     // The key is the original, unobfuscated class name prefix.
     // The value is the new, obfuscated prefix.
     auto it = obfs_map.find("android.content.res.XRes");
-    if (it == obfs_map.end()) {
+    if (it == obfs_map.end() || it->second.empty()) {
         LOGE("Could not find obfuscated name for XResources; using the plain one.");
         return std::string("android/content/res/XResources");
     }
