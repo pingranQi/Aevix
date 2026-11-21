@@ -44,8 +44,8 @@
  *   1. Aevix intercepts the loading of your native library (e.g., libnative.so).
  *   2. Aevix looks for and calls the `native_init` function within your library.
  *   3. Aevix passes a `NativeAPIEntries` struct to your `native_init`,
- *      which contains function pointers to Aevix's hooking
- *      and unhooking implementations (powered by Dobby).
+ *      which contains function pointers to Aevix's configured inline-hook backend
+ *      and matching unhook implementation (ShadowHook or Dobby).
  *   4. Your `native_init` function saves these function pointers for later use
  *      and returns a callback function (`NativeOnModuleLoaded`).
  *   5. Aevix will then invoke your returned callback every time

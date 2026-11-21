@@ -32,6 +32,10 @@ int main() {
     assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
                return std::make_pair(-1, 99);
            }) == -1);
+    assert(registry.InstallHook(0x3000, InlineHookBackendKind::kDobby, [] {
+               return std::make_pair(-1, 0);
+           }) == -1);
+    assert(registry.UnhookLast(0x3000, remove) == InlineHookUnhookResult::kNotFound);
     assert(registry.UnhookLast(target, [](const auto &) { return false; }) ==
            InlineHookUnhookResult::kFailed);
     int retried_stub = 0;

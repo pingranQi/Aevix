@@ -29,9 +29,15 @@ public:
         // Keep installation and registration atomic with respect to UnhookLast. Otherwise an
         // unhook racing between the native hook call and Add() could dispatch to the wrong backend.
         std::lock_guard<std::mutex> lock(mutex_);
+        auto &entries = records_[target];
+        // Allocate registry storage before patching executable code. Once the hook succeeds,
+        // recording its handle must not fail because the vector needs to grow.
+        entries.reserve(entries.size() + 1);
         auto result = install();
         if (result.first == 0) {
-            records_[target].push_back(Record{backend, std::move(result.second)});
+            entries.push_back(Record{backend, std::move(result.second)});
+        } else if (entries.empty()) {
+            records_.erase(target);
         }
         return result.first;
     }
