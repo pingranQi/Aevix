@@ -194,23 +194,14 @@ LibArtSnapshotResult CaptureLibArtExecutableState() {
 }
 
 bool PreparePreservedPagesForRewrite(uintptr_t mapping_start, uintptr_t mapping_end,
-                                     int original_protection, size_t page_size) {
+                                     int, size_t page_size) {
+    // Validate all snapshots before replacing the segment. Do not change page protections here:
+    // any write/protection failure after MAP_FIXED must take the same rollback path as a mapping
+    // failure, rather than leaving a page writable outside the transaction.
     for (const auto &page : g_preserved_art_pages) {
         if (page.address < mapping_start || page.address >= mapping_end) continue;
         if (page.bytes.size() != page_size) {
             LOGE("Invalid preserved libart page size at {}", reinterpret_cast<void *>(page.address));
-            return false;
-        }
-
-        const int writable_protection = original_protection | PROT_WRITE;
-        if (mprotect(reinterpret_cast<void *>(page.address), page_size, writable_protection) != 0) {
-            PLOGE("Cannot make preserved libart page at {} writable",
-                  reinterpret_cast<void *>(page.address));
-            return false;
-        }
-        if (mprotect(reinterpret_cast<void *>(page.address), page_size, original_protection) != 0) {
-            PLOGE("Cannot restore protection for preserved libart page at {}",
-                  reinterpret_cast<void *>(page.address));
             return false;
         }
     }
@@ -365,6 +356,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             page_start = next_page;
         }
 
+        if (!success) break;
         if (segment_modified_pages == 0) continue;
 
         const size_t mapping_span = first_page_prefix + segment_size;
@@ -387,8 +379,8 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
             break;
         }
 
-        // Verify that pre-Aevix modifications in this segment can be rewritten before replacing
-        // its mapping. If this fails, leave the original mapping and every external hook intact.
+        // Validate the saved pre-Aevix pages before replacing this segment. Any later write or
+        // protection failure is handled by restoring the complete pre-replacement segment snapshot.
         if (!PreparePreservedPagesForRewrite(mapping_start, mapping_end, original_protection,
                                              page_size)) {
             success = false;

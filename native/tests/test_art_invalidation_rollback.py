@@ -19,3 +19,6 @@ assert "result.rollback_success = rollback_success;" in body
 assert "if (result.rollback_success)" in source
 assert "diagnostic state retained" in source
 assert "success = false;\n            continue;" not in body
+
+assert "Do not change page protections here" in source
+assert "if (!success) break;\n        if (segment_modified_pages == 0)" in body
