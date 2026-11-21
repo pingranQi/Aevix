@@ -400,6 +400,13 @@ object ConfigCache {
         }
       }
 
+      // Do not mutate the persisted module/scope rows from a partial walk. The package manager
+      // may have died after the first query, making every later package look uninstalled.
+      if (packageManager?.asBinder() !== packageManagerBinder || !packageManagerBinder.isBinderAlive) {
+        Log.w(TAG, "Package manager died during module enumeration; keeping previous configuration")
+        return false
+      }
+
       if (packageManager?.asBinder()?.isBinderAlive == true) {
         obsoleteModules.forEach { ModuleDatabase.removeModule(it) }
         obsoletePaths.forEach { (pkg, path) -> ModuleDatabase.updateModuleApkPath(pkg, path, true) }
