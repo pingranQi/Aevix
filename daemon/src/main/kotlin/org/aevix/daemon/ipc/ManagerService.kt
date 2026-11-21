@@ -276,7 +276,6 @@ object ManagerService : IManagerService.Stub() {
       filterNoProcess: Boolean
   ): ParcelableListSlice<PackageInfo> {
     requireManager()
-    requireManager()
     return ParcelableListSlice(
         packageManager?.getInstalledPackagesFromAllUsers(flags, filterNoProcess) ?: emptyList())
   }
