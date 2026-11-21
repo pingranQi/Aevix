@@ -3,7 +3,7 @@ name: Core
 on:
   workflow_dispatch:
   push:
-    branches: [ master ]
+    branches: [ master, port/vector-966-1013 ]
     tags: [ v* ]
   pull_request:
   merge_group:
