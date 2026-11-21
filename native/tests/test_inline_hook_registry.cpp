@@ -1,0 +1,51 @@
+#include "core/inline_hook_registry.h"
+
+#include <cassert>
+#include <cstdint>
+#include <vector>
+
+using namespace vector::native;
+
+int main() {
+    InlineHookRegistry<int> registry;
+    constexpr uintptr_t target = 0x1000;
+    registry.Add(target, InlineHookBackendKind::kShadowHook, 11);
+    registry.Add(target, InlineHookBackendKind::kShadowHook, 22);
+    std::vector<int> removed;
+    auto remove = [&](const InlineHookRegistry<int>::Record &record) {
+        removed.push_back(record.stub);
+        return true;
+    };
+    assert(registry.UnhookLast(target, remove) == InlineHookUnhookResult::kRemoved);
+    assert(registry.UnhookLast(target, remove) == InlineHookUnhookResult::kRemoved);
+    assert((removed == std::vector<int>{22, 11}));
+    assert(registry.UnhookLast(target, remove) == InlineHookUnhookResult::kNotFound);
+
+    registry.Add(target, InlineHookBackendKind::kShadowHook, 33);
+    assert(registry.UnhookLast(target, [](const auto &) { return false; }) ==
+           InlineHookUnhookResult::kFailed);
+    int retried_stub = 0;
+    assert(registry.UnhookLast(target, [&](const auto &record) {
+               retried_stub = record.stub;
+               return true;
+           }) == InlineHookUnhookResult::kRemoved);
+    assert(retried_stub == 33);
+
+    registry.Add(target, InlineHookBackendKind::kShadowHook, 44);
+    registry.Add(target, InlineHookBackendKind::kDobby, 0);
+    std::vector<InlineHookBackendKind> backends;
+    auto remove_backend = [&](const auto &record) {
+        backends.push_back(record.backend);
+        return true;
+    };
+    assert(registry.UnhookLast(target, remove_backend) == InlineHookUnhookResult::kRemoved);
+    assert(registry.UnhookLast(target, remove_backend) == InlineHookUnhookResult::kRemoved);
+    assert(backends.size() == 2);
+    assert(backends[0] == InlineHookBackendKind::kDobby);
+    assert(backends[1] == InlineHookBackendKind::kShadowHook);
+
+    registry.Add(0x2000, InlineHookBackendKind::kDobby, 0);
+    assert(registry.UnhookLast(target, remove_backend) == InlineHookUnhookResult::kNotFound);
+    assert(registry.UnhookLast(0x2000, remove_backend) == InlineHookUnhookResult::kRemoved);
+    return 0;
+}
