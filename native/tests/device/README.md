@@ -5,8 +5,9 @@ builds and contract tests do not prove ART mapping or Zygisk process-injection b
 
 ## ABI matrix
 
-Run all scenarios on an arm64-v8a device and an armeabi-v7a device (or 32-bit ARM userspace).
-Record Android API level, build fingerprint, module commit, Manager version hash, and backend.
+The current Gradle ABI filter builds arm64-v8a only. Run all scenarios on a rooted arm64-v8a device;
+do not treat armeabi-v7a as a supported install target for this branch. Record Android API level,
+build fingerprint, module commit, Manager version hash, and selected backend.
 
 ## Hook and module scenarios
 
