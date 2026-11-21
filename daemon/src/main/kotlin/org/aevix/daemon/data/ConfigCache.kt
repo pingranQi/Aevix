@@ -49,6 +49,31 @@ object ConfigCache {
 
   private val cacheUpdateChannel = Channel<Unit>(Channel.CONFLATED)
 
+  /**
+   * Signalled when `state.isCacheReady` flips true, so that [awaitReady] can be a bounded wait
+   * rather than a poll. A lock and a condition rather than `Object.wait`, because the wait is
+   * timed and the flag it waits on is a `@Volatile` field read outside the lock.
+   */
+  /**
+   * How long a binder caller may spend waiting for a build it did not start.
+   *
+   * The caller on the common path is `system_server`, through `AevixService.attachProcess`: it
+   * holds one of its own binder threads for the whole of the transaction. Two hundred milliseconds
+   * is short enough that sixteen of them can wait at once without the framework noticing, and long
+   * enough to cover a build that is already almost done.
+   */
+  /**
+   * How long a process may spend asking which modules it runs inside.
+   *
+   * This is that process's own startup, not system_server's, so the budget is larger: the cost of
+   * giving up here is a process that starts without its modules, and the cost of waiting is a
+   * fraction of one app's launch.
+   */
+  /** Asks for one cache build; CONFLATED, because a second request during one adds nothing. */
+  // Held for the whole of a rebuild, so that only one runs at a time. Two workers start rebuilds
+  // independently -- the channel below and the readiness worker -- and two at once could read the
+  // database in different orders, with whichever reached the swap last publishing a module set
+  // assembled from a half-written configuration.
   private val readyLock = ReentrantLock()
   private val readySignal = readyLock.newCondition()
   private val warmUpChannel = Channel<Unit>(Channel.CONFLATED)
@@ -70,6 +95,11 @@ object ConfigCache {
             .onFailure { Log.e(TAG, "Cache update failed; the next request will try again", it) }
       }
     }
+    // The readiness worker: one build at a time, off every caller's thread. Failures are logged and
+    // leave the cache unbuilt, which the next request retries -- the alternative, propagating here,
+    // would end this coroutine and leave nothing to retry with.
+        runCatching { prepareCache() }
+            .onFailure { Log.e(TAG, "Cache build failed; the next request will try again", it) }
     AevixDaemon.scope.launch {
       for (ignored in warmUpChannel) {
         var attempts = 0
@@ -89,6 +119,61 @@ object ConfigCache {
     applySqliteHelperWorkaround()
   }
 
+  /**
+   * The readiness latch, as a caller that may be a `system_server` binder thread can afford it.
+   *
+   * This used to rebuild the cache in place, on whatever thread asked. That thread is
+   * [org.aevix.daemon.AevixService.attachProcess] on the common path, which is a `system_server`
+   * binder thread: the daemon answers the fork-time binder call for every process that starts,
+   * `system_server` holds one of its binder threads for the whole of that call, and the rebuild
+   * reads the module database and opens every installed APK to look for a module entry. A boot that
+   * starts a dozen apps at once parked most of `system_server`'s binder pool behind a disk walk in
+   * another process; with none of them answering, the watchdog read the silence as a dead framework
+   * and restarted zygote. That is the soft reboot.
+   *
+   * So the rebuild moved to a worker of its own and this became a bounded wait. A warm cache -- the
+   * ordinary case, since [org.aevix.daemon.AevixDaemon] warms it while it still has root -- makes
+   * this a single volatile read.
+   */
+    if (state.isCacheReady) return
+    if (packageManager?.asBinder()?.isBinderAlive != true) return
+    awaitReady(READY_WAIT_MS)
+  /** Asks the background worker to build the cache, if it has not been built already. */
+    if (state.isCacheReady) return
+    warmUpChannel.trySend(Unit)
+  /**
+   * Waits until the cache is ready or [timeoutMs] has passed, and answers whether it is ready.
+   *
+   * Called on a binder thread only with [READY_WAIT_MS]; [org.aevix.daemon.AevixDaemon.main] uses
+   * a larger budget, and it is not a binder thread.
+   */
+        // A broken wait is not a reason to spin: the caller gets the same answer a timeout gives.
+    } finally {
+      readyLock.unlock()
+    }
+    return true
+  /**
+   * Builds the cache, once, on the warm-up worker.
+   *
+   * The rebuild lock, not `this`: this is the one place that starts a rebuild without going through
+   * [cacheUpdateChannel], so it has to queue behind a rebuild already in flight rather than merely
+   * behind the short swaps that publish one.
+   */
+  private fun prepareCache() {
+    if (state.isCacheReady) return
+    if (packageManager?.asBinder()?.isBinderAlive != true) return
+    synchronized(rebuildLock) {
+      if (state.isCacheReady) return
+      Log.i(TAG, "System services are ready. Mapping modules and scopes.")
+      updateManager(false)
+      setupMiscPath()
+      performCacheUpdate()
+      synchronized(this) { state = state.copy(isCacheReady = true) }
+      readyLock.lock()
+      try {
+        readySignal.signalAll()
+      } finally {
+        readyLock.unlock()
   private fun ensureCacheReady(timeoutMs: Long = READY_WAIT_MS): Boolean {
     if (state.isCacheReady) return true
     if (packageManager?.asBinder()?.isBinderAlive != true) return false
@@ -461,6 +546,13 @@ object ConfigCache {
 
         val appUid = pkgInfo.applicationInfo!!.uid
 
+    // Asked before the cache, because the answer does not need it and `system_server` must never be
+    // made to wait for a build: this call can arrive on a binder thread of the very process the
+    // wait would stall.
+    if (!state.isCacheReady) {
+      warmUp()
+      awaitReady(GET_MODULES_WAIT_MS)
+    }
         for (processName in processNames) {
           addToScope(processName, appUid, module)
 
