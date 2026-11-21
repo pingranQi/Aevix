@@ -125,7 +125,10 @@ object ConfigCache {
       updateManager(false)
       setupMiscPath()
       state = state.copy(isApiProtectionEnabled = PreferenceStore.isApiProtectionEnabled())
-      performCacheUpdate()
+      if (!performCacheUpdate()) {
+        Log.w(TAG, "Cache build was deferred because system services are not ready")
+        return
+      }
       synchronized(this) { state = state.copy(isCacheReady = true) }
       readyLock.lock()
       try {
@@ -211,9 +214,10 @@ object ConfigCache {
   }
 
   /** Builds a completely new Immutable State and atomically swaps it. */
-  private fun performCacheUpdate() {
-    synchronized(rebuildLock) {
-      if (packageManager == null) return
+  private fun performCacheUpdate(): Boolean {
+    return synchronized(rebuildLock) {
+      val packageManagerBinder = packageManager?.asBinder() ?: return false
+      if (!packageManagerBinder.isBinderAlive) return false
 
       Log.d(TAG, "Executing Cache Update...")
       val oldState = state
@@ -245,7 +249,7 @@ object ConfigCache {
       val users = if (enabledRows.isEmpty()) emptyList() else userManager?.getRealUsers() ?: emptyList()
       if (enabledRows.isNotEmpty() && users.isEmpty()) {
         Log.w(TAG, "No users available; skipping this rebuild rather than assuming nothing exists")
-        return
+        return false
       }
 
       enabledRows.forEach { row ->
@@ -396,6 +400,13 @@ object ConfigCache {
         }
       }
 
+      // Do not mutate the persisted module/scope rows from a partial walk. The package manager
+      // may have died after the first query, making every later package look uninstalled.
+      if (packageManager?.asBinder() !== packageManagerBinder || !packageManagerBinder.isBinderAlive) {
+        Log.w(TAG, "Package manager died during module enumeration; keeping previous configuration")
+        return false
+      }
+
       if (packageManager?.asBinder()?.isBinderAlive == true) {
         obsoleteModules.forEach { ModuleDatabase.removeModule(it) }
         obsoletePaths.forEach { (pkg, path) -> ModuleDatabase.updateModuleApkPath(pkg, path, true) }
@@ -497,6 +508,14 @@ object ConfigCache {
             }
           }
 
+      // The package-manager snapshot is only trustworthy if the same Binder is still alive.
+      // If it died halfway through the per-user walk, every lookup may have looked like an
+      // uninstalled package; publishing that empty result would erase the last known-good cache.
+      if (packageManager?.asBinder() !== packageManagerBinder || !packageManagerBinder.isBinderAlive) {
+        Log.w(TAG, "Package manager died or changed during cache rebuild; preserving previous snapshot")
+        return false
+      }
+
       // --- ATOMIC STATE SWAP ---
       //
       // Against the *current* state, not against the copy taken at the top of this function. A
@@ -521,14 +540,27 @@ object ConfigCache {
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
 
       // Targets are removed only after the module set has been published.
-      (oldState.modules.keys - newModules.keys).forEach {
-        FrameworkService.forgetHotReloadTargets(it)
+      (oldState.modules.keys - newModules.keys).forEach { packageName ->
+        runCatching { FrameworkService.forgetHotReloadTargets(packageName) }
+            .onFailure {
+              Log.e(TAG, "Failed to retire hot-reload targets for $packageName", it)
+            }
       }
-      ModuleAppService.forgetReplacedModules(newModules)
-      FrameworkService.backfillLoadedVersions()
+      runCatching { ModuleAppService.forgetReplacedModules(newModules) }
+          .onFailure { Log.e(TAG, "Failed to retire replaced module services", it) }
+      runCatching { FrameworkService.backfillLoadedVersions() }
+          .onFailure { Log.e(TAG, "Failed to backfill loaded module versions", it) }
 
-      // Ask stale opt-in targets to load the generation that was just installed.
-      newModules.values.forEach { ModuleAppService.autoHotReload(it) }
+      // These are post-publication notifications. A failure in one module must not turn an
+      // already-published cache snapshot into a failed build or prevent the other modules from
+      // receiving their reload request.
+      newModules.values.forEach { module ->
+        runCatching { ModuleAppService.autoHotReload(module) }
+            .onFailure {
+              Log.e(TAG, "Failed to request hot reload for ${module.packageName}", it)
+            }
+      }
+      true
       // Log.d(TAG, "cached modules:")
       // newModules.forEach { (pkg, mod) -> Log.d(TAG, "$pkg ${mod.apkPath}") }
 

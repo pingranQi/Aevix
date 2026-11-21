@@ -65,59 +65,93 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                         }
                     }
 
-                // Locate the exact resolveActivity method
-                val resolveMethod =
-                    supervisorClass.declaredMethods.first { it.name == "resolveActivity" }
+                // Every overload matters: explicit-component launches use a different path
+                // from implicit intents, and reflection does not promise a stable method order.
+                val resolveMethods =
+                    supervisorClass.declaredMethods.filter { it.name == "resolveActivity" }
+                if (resolveMethods.isEmpty()) {
+                    Utils.logD("ActivityTaskSupervisor has no resolveActivity; manager redirection unavailable")
+                }
 
-                // Hook the resolution method to inject our redirection logic
-                AevixHookBuilder(resolveMethod).intercept { chain ->
-                    // Execute the original resolution first
-                    val result = chain.proceed()
-
-                    val intent = chain.args[0] as? Intent ?: return@intercept result
-
-                    // Check if this intent is meant for the Aevix Manager
-                    if (!intent.hasCategory(BuildConfig.ManagerPackageName + ".LAUNCH_MANAGER"))
-                        return@intercept result
-
-                    val originalActivityInfo =
-                        result as? ActivityInfo
-                            ?: run {
-                                Utils.logD(
-                                    "Redirection: result is not ActivityInfo (was ${result?.javaClass?.name})"
-                                )
+                for (resolveMethod in resolveMethods) {
+                    runCatching {
+                        AevixHookBuilder(resolveMethod).intercept { chain ->
+                            val result = chain.proceed()
+                            val intent = chain.args.firstOrNull() as? Intent
+                                ?: return@intercept result
+                            if (!intent.hasCategory(BuildConfig.ManagerPackageName + ".LAUNCH_MANAGER")) {
                                 return@intercept result
                             }
 
-                    // We only intercept if it's currently resolving to the shell/fallback
-                    if (originalActivityInfo.packageName != BuildConfig.InjectedPackageName)
-                        return@intercept result
+                            // Most releases return ActivityInfo directly. Some ROMs wrap it
+                            // in a result object; update the wrapped field as well so the caller
+                            // receives the redirected process name in either representation.
+                            var holder: Any? = null
+                            val originalActivityInfo: ActivityInfo? =
+                                when (result) {
+                                    is ActivityInfo -> result
+                                    else ->
+                                        result?.javaClass?.let { resultClass ->
+                                            val field =
+                                                runCatching {
+                                                    resultClass.getDeclaredField("activityInfo")
+                                                        .apply { isAccessible = true }
+                                                }.getOrNull()
+                                            val value =
+                                                if (field == null) null
+                                                else runCatching { field.get(result) as? ActivityInfo }.getOrNull()
+                                            if (value != null) holder = result
+                                            value
+                                        }
+                                }
+                            if (originalActivityInfo == null) {
+                                android.util.Log.e(
+                                    "AevixDiag",
+                                    "resolveActivity result has no ActivityInfo: ${result?.javaClass?.name}",
+                                )
+                                return@intercept result
+                            }
+                            android.util.Log.i(
+                                "AevixDiag",
+                                "manager resolve hit result=${result?.javaClass?.name} package=${originalActivityInfo.packageName}",
+                            )
+                            if (originalActivityInfo.packageName != BuildConfig.InjectedPackageName) {
+                                return@intercept result
+                            }
 
-                    // --- Redirection Logic ---
-                    // We create a copy of the ActivityInfo to avoid polluting the system's cache.
-                    val redirectedInfo =
-                        ActivityInfo(originalActivityInfo).apply {
-                            // Force the manager to run in its own dedicated process name
-                            processName = BuildConfig.ManagerPackageName
-
-                            // Set a standard theme so transition animations work correctly
-                            theme = android.R.style.Theme_DeviceDefault_Settings
-
-                            // Ensure the activity isn't excluded from recents by host flags
-                            flags =
-                                flags and
-                                    (ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS or
-                                            ActivityInfo.FLAG_FINISH_ON_CLOSE_SYSTEM_DIALOGS)
-                                        .inv()
+                            val redirectedInfo = ActivityInfo(originalActivityInfo).apply {
+                                processName = BuildConfig.ManagerPackageName
+                                theme = android.R.style.Theme_DeviceDefault_Settings
+                                flags = flags and (
+                                    ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS or
+                                        ActivityInfo.FLAG_FINISH_ON_CLOSE_SYSTEM_DIALOGS
+                                ).inv()
+                            }
+                            BridgeService.getService()?.preStartManager()
+                            if (holder != null) {
+                                runCatching {
+                                    holder!!.javaClass.getDeclaredField("activityInfo")
+                                        .apply { isAccessible = true }
+                                        .set(holder, redirectedInfo)
+                                }.onFailure {
+                                    android.util.Log.e("AevixDiag", "failed to update wrapped ActivityInfo", it)
+                                }
+                                holder
+                            } else {
+                                redirectedInfo
+                            }
                         }
-
-                    // Notify the bridge service that we are about to start the manager
-                    BridgeService.getService()?.preStartManager()
-
-                    redirectedInfo
+                    }.onFailure {
+                        Utils.logE(
+                            "Failed to hook resolveActivity(${resolveMethod.parameterCount} args)",
+                            it,
+                        )
+                    }
                 }
 
-                Utils.logD("Successfully hooked Activity Supervisor for Manager redirection.")
+                Utils.logD(
+                    "Installed manager redirection on ${resolveMethods.size} resolveActivity overload(s)."
+                )
             }
             .onFailure { Utils.logE("Failed to hook system server activity resolution", it) }
     }
@@ -147,10 +181,18 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                         activityRecordClass.getDeclaredField("info").apply { isAccessible = true }
 
                     AevixHookBuilder(createMethod).intercept { chain ->
-                        val activityRecord = chain.args[0]
-                        val info = infoField.get(activityRecord) as ActivityInfo
+                        // Both reads are guarded: this runs on the window manager's own thread for
+                        // every activity start, and a throw here would be answered by the
+                        // protective mode replaying the original - which is the right outcome, but
+                        // only after the exception has crossed a path that measures its own
+                        // latency. An unknown shape simply means "not ours".
+                        val activityRecord = chain.args.firstOrNull()
+                        val info =
+                            if (activityRecord == null) null
+                            else runCatching { infoField.get(activityRecord) as? ActivityInfo }
+                                .getOrNull()
 
-                        if (info.processName == BuildConfig.ManagerPackageName) {
+                        if (info?.processName == BuildConfig.ManagerPackageName) {
                             Utils.logD("Suppressing Android 12+ Splash Screen for Aevix Manager.")
                             return@intercept null
                         }
@@ -179,10 +221,14 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                         recordClass.getDeclaredField("info").apply { isAccessible = true }
 
                     AevixHookBuilder(showMethod).intercept { chain ->
+                        // Same guard as the API 31+ branch above.
                         val activityRecord = chain.thisObject
-                        val info = infoField.get(activityRecord) as ActivityInfo
+                        val info =
+                            if (activityRecord == null) null
+                            else runCatching { infoField.get(activityRecord) as? ActivityInfo }
+                                .getOrNull()
 
-                        if (info.processName == BuildConfig.ManagerPackageName) {
+                        if (info?.processName == BuildConfig.ManagerPackageName) {
                             Utils.logD("Suppressing Legacy Starting Window for Aevix Manager.")
                             return@intercept null
                         }

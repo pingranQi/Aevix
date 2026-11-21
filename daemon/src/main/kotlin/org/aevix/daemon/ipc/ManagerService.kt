@@ -12,6 +12,7 @@ import android.content.pm.ResolveInfo
 import android.content.pm.VersionedPackage
 import android.net.Uri
 import android.os.Build
+import android.os.Binder
 import android.os.Bundle
 import android.provider.Settings
 import android.os.IBinder
@@ -136,20 +137,34 @@ object ManagerService : IManagerService.Stub() {
 
   @Synchronized
   fun tryRegisterManagerProcess(pid: Int, uid: Int, processName: String): Boolean {
-    if (ConfigCache.isManager(uid) && processName == BuildConfig.DEFAULT_MANAGER_PACKAGE_NAME) {
-      if (pendingManager) {
-        Log.v(TAG, "Parasitic manager registered.")
-        pendingManager = false
-      } else {
-        Log.v(TAG, "Starting user-installed manager process.")
-      }
-      managerPid = pid
-      return true
+    // The name first, because it is a string compare and `isManager` is a readiness latch: asked in
+    // the other order, every process that forks pays for a cache the answer cannot depend on. Only
+    // one process name on the device can be the manager, and it is not this one in all but one
+    // case.
+    if (processName != BuildConfig.DEFAULT_MANAGER_PACKAGE_NAME) return false
+    if (!ConfigCache.isManager(uid)) return false
+
+    if (pendingManager) {
+      Log.v(TAG, "Parasitic manager registered.")
+      pendingManager = false
+    } else {
+      Log.v(TAG, "Starting user-installed manager process.")
     }
-    return false
+    managerPid = pid
+    return true
   }
 
-  fun postStartManager(pid: Int): Boolean = pid == managerPid
+  fun postStartManager(pid: Int, uid: Int): Boolean =
+      pid == managerPid && ConfigCache.isManager(uid)
+
+  /** Re-check the kernel caller on every privileged manager transaction. */
+  private fun requireManager() {
+    val uid = Binder.getCallingUid()
+    if (!ConfigCache.isManager(uid)) {
+      Log.w(TAG, "Refusing a manager-only transaction to uid=$uid")
+      throw SecurityException("uid $uid is not allowed to call this")
+    }
+  }
 
   private fun getManagerIntent(): Intent? {
     if (managerIntent != null) return managerIntent
@@ -260,6 +275,7 @@ object ManagerService : IManagerService.Stub() {
       flags: Int,
       filterNoProcess: Boolean
   ): ParcelableListSlice<PackageInfo> {
+    requireManager()
     return ParcelableListSlice(
         packageManager?.getInstalledPackagesFromAllUsers(flags, filterNoProcess) ?: emptyList())
   }
@@ -282,12 +298,16 @@ object ManagerService : IManagerService.Stub() {
         }
       }
 
-  override fun setModuleEnabled(packageName: String, enabled: Boolean) =
-      if (enabled) ModuleDatabase.enableModule(packageName)
-      else ModuleDatabase.disableModule(packageName)
+  override fun setModuleEnabled(packageName: String, enabled: Boolean): Boolean {
+    requireManager()
+    return if (enabled) ModuleDatabase.enableModule(packageName)
+    else ModuleDatabase.disableModule(packageName)
+  }
 
-  override fun setModuleScope(packageName: String, scope: MutableList<ScopeEntry>) =
-      ModuleDatabase.setModuleScope(packageName, scope)
+  override fun setModuleScope(packageName: String, scope: MutableList<ScopeEntry>): Boolean {
+    requireManager()
+    return ModuleDatabase.setModuleScope(packageName, scope)
+  }
 
   override fun getModuleScope(packageName: String) = ModuleDatabase.getModuleScope(packageName)
 
@@ -297,6 +317,7 @@ object ManagerService : IManagerService.Stub() {
   override fun isVerboseLogEnabled() = PreferenceStore.isVerboseLogEnabled()
 
   override fun setVerboseLogEnabled(enabled: Boolean) {
+    requireManager()
     PreferenceStore.setVerboseLog(enabled)
     if (enabled) {
       LogcatMonitor.startVerbose()
@@ -366,6 +387,7 @@ object ManagerService : IManagerService.Stub() {
   }
 
   override fun forceStopPackage(packageName: String, userId: Int) {
+    requireManager()
     activityManager?.forceStopPackage(packageName, userId)
   }
 
@@ -376,6 +398,7 @@ object ManagerService : IManagerService.Stub() {
    * `null` there is what `pm install-existing` passes: allowlist nothing extra, not grant nothing.
    */
   override fun installExistingPackageAsUser(packageName: String, userId: Int): Boolean {
+    requireManager()
     val pm = packageManager ?: return false
     return runCatching {
           val status =
@@ -397,7 +420,10 @@ object ManagerService : IManagerService.Stub() {
         .getOrDefault(false)
   }
 
-  override fun softReboot() = AevixDaemon.softReboot()
+  override fun softReboot() {
+    requireManager()
+    AevixDaemon.softReboot()
+  }
 
   /**
    * The flashed manager APK, verified, for the manager to install as an ordinary app.
@@ -416,10 +442,12 @@ object ManagerService : IManagerService.Stub() {
           .getOrNull()
 
   override fun reboot() {
+    requireManager()
     powerManager?.reboot(false, null, false)
   }
 
   override fun uninstallPackage(packageName: String, userId: Int): Boolean {
+    requireManager()
     val latch = CountDownLatch(1)
     var result = false
 
@@ -614,6 +642,7 @@ object ManagerService : IManagerService.Stub() {
   }
 
   override fun writeBugReport(zipFd: ParcelFileDescriptor) {
+    requireManager()
     FileSystem.getLogs(zipFd)
   }
 
@@ -631,7 +660,10 @@ object ManagerService : IManagerService.Stub() {
     }
   }
 
-  override fun optimizePackage(packageName: String) = PackageOptimizer.optimize(packageName)
+  override fun optimizePackage(packageName: String): Boolean {
+    requireManager()
+    return PackageOptimizer.optimize(packageName)
+  }
 
   override fun getDex2OatWrapperState() =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Dex2OatServer.compatibility else 0
@@ -646,6 +678,7 @@ object ManagerService : IManagerService.Stub() {
 
 
   override fun installFrameworkZip(zipPath: String, receiver: IFrameworkInstallReceiver) {
+    requireManager()
     // Off the binder thread: a flash takes seconds to minutes, and holding a binder thread for its
     // duration starves everything else the manager asks of the daemon meanwhile — including the
     // log reads the install screen is doing to show what is happening.

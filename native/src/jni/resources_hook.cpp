@@ -45,27 +45,31 @@ static TYPE_GET_STRINGS ResXMLParser_getStrings = nullptr;
 
 /**
  * @brief Constructs the class name for the XResources class at runtime.
+ *
+ * Deliberately not cached. It used to be, and the cached value was computed from whatever the
+ * obfuscation map held at the first call: registered natively before the map arrived, it went on
+ * answering the empty string for the life of the process, and every later `XResources` lookup
+ * failed against a name that could no longer change. The lookup is a map find and a concatenation
+ * on a path that runs once per process, so there is nothing to save.
+ *
+ * A missing entry means the prefix was not rewritten, which makes the plain name the right answer
+ * rather than a reason to return nothing.
  */
 static std::string GetXResourcesClassName() {
-    // Use a static local variable to ensure this lookup and string manipulation
-    // only happens once.
-    static std::string name = []() {
-        auto &obfs_map = ConfigBridge::GetInstance()->obfuscation_map();
-        if (obfs_map.empty()) {
-            LOGW("GetXResourcesClassName: obfuscation_map is empty.");
-        }
-        // The key is the original, unobfuscated class name prefix.
-        // The value is the new, obfuscated prefix.
-        auto it = obfs_map.find("android.content.res.XRes");
-        if (it == obfs_map.end()) {
-            LOGE("Could not find obfuscated name for XResources.");
-            return std::string();
-        }
-        std::string jni_name = it->second + "ources";
-        LOGD("Resolved XResources class name to: {}", jni_name.c_str());
-        return jni_name;
-    }();
-    return name;
+    auto &obfs_map = ConfigBridge::GetInstance()->obfuscation_map();
+    if (obfs_map.empty()) {
+        LOGW("GetXResourcesClassName: obfuscation_map is empty.");
+    }
+    // The key is the original, unobfuscated class name prefix.
+    // The value is the new, obfuscated prefix.
+    auto it = obfs_map.find("android.content.res.XRes");
+    if (it == obfs_map.end() || it->second.empty()) {
+        LOGE("Could not find obfuscated name for XResources; using the plain one.");
+        return std::string("android/content/res/XResources");
+    }
+    std::string jni_name = it->second + "ources";
+    LOGD("Resolved XResources class name to: {}", jni_name.c_str());
+    return jni_name;
 }
 
 /**
@@ -266,6 +270,22 @@ static constexpr size_t kMaxMapOffset = LP_SELECT(0xa0, 0x140);
 // The map holds one id per string in the document's own pool, so a count this large is not a
 // candidate but a coincidence.
 static constexpr size_t kMaxMapEntries = 0x4000;
+
+// Bounds on what a start tag claims about its own attribute array. `ResXMLTree_attribute` is 20
+// bytes on every ABI (three 4-byte indices and an 8-byte Res_value) and `ResXMLTree_attrExt` is 20
+// too, so these are the layout's own numbers with room above them for a release that grows one.
+// Every one of them is read out of the document being parsed, and the loop below steps by
+// `attributeSize`: a zero there never advances, and a large one walks past the tree.
+static constexpr uint16_t kMinAttributeSize = 20;
+static constexpr uint16_t kMaxAttributeSize = 0x100;
+static constexpr uint16_t kMinAttributeStart = 20;
+static constexpr uint16_t kMaxAttributeStart = 0x1000;
+// A tag with more attributes than this is not a layout anyone wrote.
+static constexpr size_t kMaxAttributes = 0x800;
+// attributeStart + attributeSize * attributeCount: the whole array, which is what gets probed.
+static constexpr size_t kMaxAttributesSpan = 0x10000;
+// A string this long in a resource pool is a length field that was never written.
+static constexpr size_t kMaxAttributeNameLength = 0x1000;
 // Where the search landed: zero until it has run, kMapUnusable once it has given up. Inflation is
 // not single threaded - RemoteViews and AsyncLayoutInflater both do it off the main thread - so the
 // one variable that gates a raw write into framework memory is not left to luck.
@@ -386,6 +406,18 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
 
     if (parser == nullptr) return;
 
+    // The Java side calls this whether or not initXResourcesNative succeeded, because the two are
+    // registered together and only one of them reports a result. Without the symbols there is
+    // nothing to walk the tree with, and calling through a null function pointer here is a
+    // SIGSEGV in whichever process asked for the layout - system_server included.
+    //
+    // `getAttributeNameID` is in the required set even though the name half is optional: it is
+    // called unconditionally for every attribute below, before the code has decided whether that
+    // half is available at all.
+    if (ResXMLParser_next == nullptr || ResXMLParser_restart == nullptr ||
+        ResXMLParser_getAttributeNameID == nullptr)
+        return;
+
     // Everything behind the parser is reached through the framework's own accessors: the tree used
     // to be read at fixed offsets, which stopped describing it in Android 10 and silently skipped
     // the whole attribute name half of this rewrite from then on. Without those accessors only the
@@ -402,9 +434,29 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
     do {
         // Call the native android::ResXMLParser::next() function via our pointer.
         switch (ResXMLParser_next(parser)) {
-        case android::ResXMLParser::START_TAG:
+        case android::ResXMLParser::START_TAG: {
             tag = (android::ResXMLTree_attrExt *)parser->mCurExt;
+            // A START_TAG with no extension is a tree this code does not describe. Reading
+            // `attributeCount` out of null is the first word of the header page.
+            if (tag == nullptr) continue;
             attrCount = tag->attributeCount;
+
+            // The attribute array is `attributeStart` bytes into the tag, each entry
+            // `attributeSize` bytes, and both come out of the file being parsed. A damaged or
+            // hostile document can name a stride of zero - which never advances, so the loop
+            // below has no exit - or a span that runs off the end of the tree, and either one is
+            // read as memory rather than refused. Bounded here to what a real document uses.
+            if (attrCount == 0 || attrCount > kMaxAttributes) continue;
+            if (tag->attributeSize < kMinAttributeSize || tag->attributeSize > kMaxAttributeSize)
+                continue;
+            if (tag->attributeStart < kMinAttributeStart || tag->attributeStart > kMaxAttributeStart)
+                continue;
+            const size_t attrsSpan = tag->attributeSize * attrCount;
+            if (tag->attributeStart + attrsSpan > kMaxAttributesSpan) continue;
+            // One probe for the whole array rather than one per attribute. The array starts
+            // `attributeStart` bytes into the tag and runs for `attributeSize` per entry.
+            if (!IsMapped(reinterpret_cast<uintptr_t>(tag) + tag->attributeStart, attrsSpan))
+                continue;
             // Loop through all attributes of the current XML tag.
             for (size_t idx = 0; idx < attrCount; idx++) {
                 auto attr =
@@ -427,8 +479,9 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
                 if (nameSlot != nullptr) {
                     auto attrName = strings->stringAt(attrNameID);
                     // An index the pool cannot decode comes back empty, and NewString(nullptr, 0)
-                    // is a JNI misuse that aborts the process under CheckJNI.
-                    if (attrName.data_ != nullptr) {
+                    // is a JNI misuse that aborts the process under CheckJNI. The length is read
+                    // from the pool too, so it is bounded before it becomes an allocation size.
+                    if (attrName.data_ != nullptr && attrName.length_ <= kMaxAttributeNameLength) {
                         jstring attrNameStr =
                             env->NewString((const jchar *)attrName.data_, attrName.length_);
                         if (env->ExceptionCheck()) goto leave;  // Critical check
@@ -462,6 +515,7 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
                 if (newValue != oldValue) attr->typedValue.data = newValue;
             }
             continue;
+        }
         case android::ResXMLParser::END_DOCUMENT:
         case android::ResXMLParser::BAD_DOCUMENT:
             goto leave;  // Exit the loop.

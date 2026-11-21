@@ -159,9 +159,59 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
     private val isStatic = Modifier.isStatic(method.modifiers)
     private val returnType = if (method is Method) method.returnType else null
 
-    /** Invoked by C++ via JNI. */
+    /**
+     * Invoked by C++ via JNI.
+     *
+     * Nothing in here is allowed to throw. This runs inside the process that called the hooked
+     * method — for a framework hook installed in system_server, that is the process every other
+     * process on the device depends on. An exception raised here does not read as "a hook failed";
+     * it reads as the hooked method throwing where no caller expects it, and for
+     * `handleSystemServerProcess` or `startBootstrapServices` that ends the system server and
+     * restarts the framework. So the body is contained, and every failure degrades to running the
+     * original.
+     */
     fun callback(args: Array<Any?>): Any? {
-        val thisObject = if (isStatic) null else args[0]
+        // Track the terminal invocation. If a post-hook throws after chain.proceed() has already
+        // called the original, replaying the original here would execute the method twice (for
+        // example, duplicate a package operation or a system-server state transition).
+        var originalInvoked = false
+        var originalResult: Any? = null
+        var originalFailure: Throwable? = null
+        val callOriginal: (Any?, Array<Any?>) -> Any? = { target, actualArgs ->
+            originalInvoked = true
+            try {
+                invokeOriginalSafely(target, actualArgs).also { originalResult = it }
+            } catch (failure: Throwable) {
+                originalFailure = failure
+                throw failure
+            }
+        }
+
+        return try {
+            dispatch(args, callOriginal)
+        } catch (t: Throwable) {
+            Utils.logE("Hook chain for $method failed; preserving original execution", t)
+            if (originalInvoked) {
+                // The original already ran. Preserve its result (or its own exception) and never
+                // call it a second time just because a later hook failed.
+                originalFailure?.let { throw it }
+                originalResult
+            } else {
+                val thisObject = if (isStatic) null else args.firstOrNull()
+                val actualArgs =
+                    if (isStatic) args
+                    else if (args.size <= 1) EMPTY_HOOK_ARGUMENTS
+                    else args.copyOfRange(1, args.size)
+                callOriginal(thisObject, actualArgs)
+            }
+        }
+    }
+
+    private fun dispatch(
+        args: Array<Any?>,
+        callOriginal: (Any?, Array<Any?>) -> Any?,
+    ): Any? {
+        val thisObject = if (isStatic) null else args.firstOrNull()
         val actualArgs =
             when {
                 isStatic -> args
@@ -175,24 +225,24 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
         // Null means every hook was removed after this trampoline was entered.
         val snapshots =
             HookBridge.callbackSnapshot(AevixHookRecord::class.java, method)
-                ?: return invokeOriginalSafely(thisObject, actualArgs)
+                ?: return callOriginal(thisObject, actualArgs)
 
         @Suppress("UNCHECKED_CAST") val modernHooks = snapshots[0] as Array<AevixHookRecord>
         val legacyHooks = snapshots[1]
 
         // Fast path: No hooks active
         if (modernHooks.isEmpty() && legacyHooks.isEmpty()) {
-            return invokeOriginalSafely(thisObject, actualArgs)
+            return callOriginal(thisObject, actualArgs)
         }
 
         val terminal: (Any?, Array<Any?>) -> Any? = { tObj, tArgs ->
             val delegate = AevixBootstrap.delegate
             if (legacyHooks.isNotEmpty() && delegate != null) {
                 delegate.processLegacyHook(method, tObj, tArgs, legacyHooks) {
-                    invokeOriginalSafely(tObj, tArgs)
+                    callOriginal(tObj, tArgs)
                 }
             } else {
-                invokeOriginalSafely(tObj, tArgs)
+                callOriginal(tObj, tArgs)
             }
         }
 
@@ -200,29 +250,52 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
 
         val result = rootChain.proceed()
 
-        // Type safety validation before returning to C++
-        if (returnType != null && returnType != Void.TYPE) {
-            if (result == null) {
-                if (returnType.isPrimitive) {
-                    throw NullPointerException(
-                        "Hook returned null for a primitive return type: $method"
-                    )
-                }
-            } else {
-                // Use the JNI bridge for the most reliable type check across ClassLoaders
-                if (
-                    !HookBridge.instanceOf(result, returnType) &&
-                        !isBoxingCompatible(result, returnType)
-                ) {
-                    Utils.logD(
-                        "Hook return type mismatch. Expected ${returnType.name}, got ${result.javaClass.name}"
-                    )
-                }
-            }
+        return coerceReturn(result)
+    }
+
+    /**
+     * Converts what the chain returned into something the trampoline can hand back.
+     *
+     * The trampoline is a native call into a method whose return type it has already committed to,
+     * so `null` where an `int` is expected and a `String` where an `Object` is expected are both
+     * read as memory it can reinterpret — not as a type error it can report. A wrong value here
+     * therefore has to be turned into a right-typed one before it gets there, and a hook that
+     * returns nothing for a primitive gets the primitive's zero value.
+     */
+    private fun coerceReturn(result: Any?): Any? {
+        val returnType = this.returnType ?: return result
+        if (returnType == Void.TYPE) return result
+
+        if (result == null) {
+            if (!returnType.isPrimitive) return null
+            Utils.logD(
+                "Hook returned null for primitive ${returnType.name} on $method; using the default value"
+            )
+            return defaultValueOf(returnType)
         }
 
-        return result
+        // Use the JNI bridge for the most reliable type check across ClassLoaders
+        if (HookBridge.instanceOf(result, returnType) || isBoxingCompatible(result, returnType)) {
+            return result
+        }
+
+        Utils.logD("Hook return type mismatch. Expected ${returnType.name}, got ${result.javaClass.name}")
+        return if (returnType.isPrimitive) defaultValueOf(returnType) else null
     }
+
+    /** The zero value of a primitive type, which is what an unhelpful hook falls back to. */
+    private fun defaultValueOf(type: Class<*>): Any =
+        when (type) {
+            Int::class.javaPrimitiveType -> 0
+            Long::class.javaPrimitiveType -> 0L
+            Boolean::class.javaPrimitiveType -> false
+            Double::class.javaPrimitiveType -> 0.0
+            Float::class.javaPrimitiveType -> 0f
+            Byte::class.javaPrimitiveType -> 0.toByte()
+            Char::class.javaPrimitiveType -> '\u0000'
+            Short::class.javaPrimitiveType -> 0.toShort()
+            else -> 0
+        }
 
     /** Handles primitive boxing compatibility (e.g., Integer object vs int primitive). */
     private fun isBoxingCompatible(obj: Any, targetType: Class<*>): Boolean {

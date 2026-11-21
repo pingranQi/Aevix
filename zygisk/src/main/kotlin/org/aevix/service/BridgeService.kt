@@ -7,6 +7,12 @@ import android.os.IBinder.DeathRecipient
 import android.os.Parcel
 import hidden.HiddenApiBridge.Binder_allowBlocking
 import hidden.HiddenApiBridge.Context_getActivityToken
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Callable
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.aevix.ipc.IAevixDaemon
 import org.aevix.util.Log
 
@@ -31,6 +37,29 @@ object BridgeService {
     @Volatile private var serviceBinder: IBinder? = null
 
     @Volatile private var service: IAevixDaemon? = null
+
+    /**
+     * Runs the hand-off to the daemon off the transaction's own thread.
+     *
+     * Every process on the device that is in scope asks for its binder here, and asks from its own
+     * fork, while `system_server` holds one of its binder threads for the answer. Answering means a
+     * synchronous binder call into the daemon, and the daemon was -- until its cache stopped being
+     * rebuilt on the calling thread -- able to spend hundreds of milliseconds on a disk walk before
+     * it replied. Sixteen of those at once is the whole pool, and a framework with no free binder
+     * thread is a framework the watchdog kills.
+     *
+     * Bounded so a daemon that stops answering cannot cause unbounded thread growth. Rejected
+     * work fails closed: that process starts without injection rather than consuming the Binder pool.
+     */
+    private val attachCalls = ThreadPoolExecutor(
+        4, 8, 30L, TimeUnit.SECONDS,
+        ArrayBlockingQueue(16),
+        { runnable -> Thread(runnable, "aevix-bridge-attach").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+
+    /** How long `system_server` will hold a binder thread waiting for the daemon's answer. */
+    private const val ATTACH_TIMEOUT_MS = 2000L
 
     /** Cleans up service references if the remote Aevix daemon crashes. */
     private val serviceRecipient: DeathRecipient = DeathRecipient {
@@ -105,17 +134,62 @@ object BridgeService {
                 Action.GET_BINDER -> {
                     val processName = data.readString()
                     val heartBeat = data.readStrongBinder()
-                    val appService =
-                        service?.attachProcess(
-                            Binder.getCallingUid(),
-                            Binder.getCallingPid(),
-                            processName,
-                            heartBeat,
-                        )
+                    // Read here rather than inside the call below: these are the kernel's answer
+                    // about whoever sent this transaction, and a pooled thread has no transaction
+                    // of its own to be told about.
+                    val callerUid = Binder.getCallingUid()
+                    val callerPid = Binder.getCallingPid()
+                    val daemon = service
 
-                    if (appService != null && reply != null) {
+                    val appBinder: IBinder? =
+                        if (daemon == null || heartBeat == null) null
+                        else {
+                            // Bound outside the lambda: the AIDL parameter is non-null at the
+                            // Kotlin level, and a smart cast does not survive the capture.
+                            val heartbeat = heartBeat
+                            try {
+                                val pending =
+                                    attachCalls.submit(
+                                        Callable {
+                                            runCatching {
+                                                    daemon
+                                                        .attachProcess(
+                                                            callerUid, callerPid, processName, heartbeat
+                                                        )
+                                                        ?.asBinder()
+                                                }
+                                                .getOrNull()
+                                        })
+                                try {
+                                    pending.get(ATTACH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                                } catch (timeout: TimeoutException) {
+                                    // Interrupt the worker where possible. A Binder call may ignore
+                                    // interruption, but the executor's hard thread/queue bounds still
+                                    // cap the damage if the daemon is wedged.
+                                    pending.cancel(true)
+                                    attachCalls.purge()
+                                    Log.w(
+                                        TAG,
+                                        "Daemon did not answer within ${ATTACH_TIMEOUT_MS}ms" +
+                                            " for $processName; starting it unhooked",
+                                    )
+                                    null
+                                } catch (interrupted: InterruptedException) {
+                                    pending.cancel(true)
+                                    attachCalls.purge()
+                                    Thread.currentThread().interrupt()
+                                    Log.w(TAG, "Interrupted while waiting for daemon attach of $processName")
+                                    null
+                                }
+                            } catch (rejected: RejectedExecutionException) {
+                                Log.w(TAG, "Bridge attach capacity exhausted; skipping $processName")
+                                null
+                            }
+                        }
+
+                    if (appBinder != null && reply != null) {
                         reply.writeNoException()
-                        reply.writeStrongBinder(appService.asBinder())
+                        reply.writeStrongBinder(appBinder)
                         true
                     } else false
                 }

@@ -161,11 +161,12 @@ object AevixDaemon {
           .onFailure { Log.e(TAG, "Logcat reader failed to start", it) }
     }
 
-    // Warm the module cache while this daemon still has root; later Binder callers use a
-    // bounded wait rather than rebuilding the cache on system_server's transaction thread.
+    // Build the module cache while this process still has root, and give it a bounded head start
+    // before the main thread drops to euid 1000 below. Later Binder callers therefore use a warm
+    // snapshot or a bounded wait rather than rebuilding it on system_server's transaction thread.
     ConfigCache.warmUp()
     if (!ConfigCache.awaitReady(1200L)) {
-      Log.w(TAG, "Module cache is not ready yet; continuing startup")
+      Log.w(TAG, "Module cache is not ready yet; continuing without it")
     }
     scope.launch {
       FileSystem.getPreloadDex(

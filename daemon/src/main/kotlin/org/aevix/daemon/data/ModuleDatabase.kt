@@ -224,6 +224,9 @@ object ModuleDatabase {
     var changed = false
 
     // First, check if it exists. If not, we need to "discover" it.
+    // `use`, because a SQLiteStatement holds a compiled program and a cursor window until it is
+    // closed; `simpleQueryForLong` does not close it, and only the finalizer would. This runs on
+    // every module enable, and the window is a scarce resource the platform bounds per process.
     val exists =
         db.compileStatement("SELECT COUNT(*) FROM modules WHERE module_pkg_name = ?")
             .use { statement ->

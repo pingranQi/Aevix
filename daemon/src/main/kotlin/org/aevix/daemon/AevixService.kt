@@ -78,6 +78,10 @@ object AevixService : IAevixDaemon.Stub() {
       processName: String,
       heartBeat: IBinder
   ): IFrameworkService? {
+    // This call is forwarded by the system-server bridge after it captured the original
+    // app's kernel UID/PID. The Binder caller here is system_server, so only its UID can be
+    // authenticated at this hop; comparing Binder.getCallingPid() with the forwarded app PID
+    // would reject every legitimate app process.
     if (Binder.getCallingUid() != 1000) {
       Log.w(TAG, "Unauthorized attachProcess call")
       return null

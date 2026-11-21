@@ -42,25 +42,79 @@ object Main {
 
         // Initialize system-specific resolution hooks if in system_server
         if (isSystem) {
-            ParasiticManagerSystemHooker.start()
+            // Both are best-effort, and both run on the system server's main thread. Contained
+            // individually so a ROM that answers unexpectedly costs one of them rather than the
+            // initialization below, which is what makes the framework work at all.
+            runCatching { ParasiticManagerSystemHooker.start() }
+                .onFailure { Utils.logE("Parasitic manager hooks failed", it) }
             // Exempt the manager host from GrapheneOS DCL restriction; no-op on other systems.
-            GrapheneDclHooker.start()
+            runCatching { GrapheneDclHooker.start() }
+                .onFailure { Utils.logE("GrapheneOS DCL exemption failed", it) }
+
+            // Independent fallback: some ROMs miss the ZygoteInit hook that normally delivers
+            // system-server initialization. Once ActivityManager is registered, its binder class
+            // loader can resolve the system-server window-manager classes. initSystemServer is
+            // synchronized and idempotent, so the normal route and this fallback cannot double-init.
+            Thread {
+                    val deadline = android.os.SystemClock.elapsedRealtime() + 60_000L
+                    while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                        if (org.aevix.impl.hookers.HandleSystemServerProcessHooker
+                                .systemServerCL != null
+                        ) {
+                            android.util.Log.i("AevixDiag", "system-server init already completed")
+                            break
+                        }
+                        val classLoader =
+                            runCatching {
+                                    android.os.ServiceManager.getService("activity")
+                                        ?.javaClass
+                                        ?.classLoader
+                                }
+                                .getOrNull()
+                        if (classLoader != null) {
+                            android.util.Log.i("AevixDiag", "fallback system-server init using $classLoader")
+                            runCatching {
+                                    org.aevix.impl.hookers.HandleSystemServerProcessHooker
+                                        .initSystemServer(classLoader, isLate = isLateInject)
+                                }
+                                .onFailure {
+                                    android.util.Log.e("AevixDiag", "fallback system-server init failed", it)
+                                }
+                            break
+                        }
+                        try {
+                            Thread.sleep(250L)
+                        } catch (interrupted: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                    }
+                }
+                .apply { isDaemon = true; name = "aevix-sysinit-fallback" }
+                .start()
         }
 
         // Initialize Xposed bridge components
         val appService = IFrameworkService.Stub.asInterface(binder)
-        Startup.initXposed(isSystem, niceName, appDir, appService)
+        runCatching { Startup.initXposed(isSystem, niceName, appDir, appService) }
+            .onFailure { Utils.logE("Framework initialization failed for $niceName", it) }
 
         // Only the daemon may lift the silence set at the top of this method, and only by actually
         // answering: a connection that is not up yet is not an answer, and the old default -- log
         // everything unless told otherwise -- turned every failed connection into one.
-        AevixServiceClient.isLogMutedOrNull()?.let { muted -> Log.muted = muted }
+        runCatching { AevixServiceClient.isLogMutedOrNull() }
+            .getOrNull()
+            ?.let { muted -> Log.muted = muted }
 
         // Check if this process is the designated Aevix Manager.
         if (niceName == BuildConfig.ManagerPackageName) {
             ParasiticManagerHooker.isParasitic = Process.myUid() == BuildConfig.HostPackageUid
             val type = if (ParasiticManagerHooker.isParasitic) "parasitic" else "user-installed"
-            if (ParasiticManagerHooker.start()) {
+            val started =
+                runCatching { ParasiticManagerHooker.start() }
+                    .onFailure { Utils.logE("Parasitic manager start failed", it) }
+                    .getOrDefault(false)
+            if (started) {
                 Utils.logI("Manager ($type) loaded into host, skipping standard bootstrap.")
                 return
             }
