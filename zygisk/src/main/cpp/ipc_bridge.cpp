@@ -626,8 +626,9 @@ void IPCBridge::HookBridge(JNIEnv *env) {
     const auto &obfs_map = ConfigBridge::GetInstance()->obfuscation_map();
     const auto service_prefix = obfs_map.find("org.aevix.service.");
     const std::string bridge_service_class_name =
-        (service_prefix == obfs_map.end() ? std::string("org.aevix.service.")
-                                          : service_prefix->second) +
+        (service_prefix == obfs_map.end() || service_prefix->second.empty()
+             ? std::string("org.aevix.service.")
+             : service_prefix->second) +
         "BridgeService";
 
     auto bridge_class_ref =
