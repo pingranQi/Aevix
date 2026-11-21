@@ -167,6 +167,7 @@ object BridgeService {
                                     // interruption, but the executor's hard thread/queue bounds still
                                     // cap the damage if the daemon is wedged.
                                     pending.cancel(true)
+                                    attachCalls.remove(pending)
                                     Log.w(
                                         TAG,
                                         "Daemon did not answer within ${ATTACH_TIMEOUT_MS}ms" +
