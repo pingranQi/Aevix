@@ -1,11 +1,18 @@
 #pragma once
 
 #include <dlfcn.h>
+#if defined(__aarch64__) || defined(__arm__)
+#include <shadowhook.h>
+#endif
 #include <dobby.h>
 
+#include <atomic>
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <utils/hook_helper.hpp>
 
+#include "core/inline_hook_registry.h"
 #include "common/config.h"
 #include "common/logging.h"
 
@@ -37,8 +44,8 @@
  *   1. Aevix intercepts the loading of your native library (e.g., libnative.so).
  *   2. Aevix looks for and calls the `native_init` function within your library.
  *   3. Aevix passes a `NativeAPIEntries` struct to your `native_init`,
- *      which contains function pointers to Aevix's hooking
- *      and unhooking implementations (powered by Dobby).
+ *      which contains function pointers to Aevix's configured inline-hook backend
+ *      and matching unhook implementation (ShadowHook or Dobby).
  *   4. Your `native_init` function saves these function pointers for later use
  *      and returns a callback function (`NativeOnModuleLoaded`).
  *   5. Aevix will then invoke your returned callback every time
@@ -91,57 +98,133 @@ struct NativeAPIEntries {
 
 namespace vector::native {
 
+inline constexpr int kInlineHookBackendDobby = 0;
+inline constexpr int kInlineHookBackendShadowHook = 1;
+
+inline std::atomic<int> g_inline_hook_backend{kInlineHookBackendDobby};
+
+inline void SetInlineHookBackend(int backend) {
+#if defined(__aarch64__) || defined(__arm__)
+    backend = backend == kInlineHookBackendShadowHook
+                  ? kInlineHookBackendShadowHook
+                  : kInlineHookBackendDobby;
+#else
+    backend = kInlineHookBackendDobby;
+#endif
+    g_inline_hook_backend.store(backend, std::memory_order_relaxed);
+    LOGD("Inline hook backend set to {}",
+         backend == kInlineHookBackendShadowHook ? "ShadowHook" : "Dobby");
+}
+
+#if defined(__aarch64__) || defined(__arm__)
+inline std::once_flag g_shadowhook_init_once;
+inline int g_shadowhook_init_result = -1;
+inline InlineHookRegistry<void *> g_inline_hook_registry;
+
+inline bool ShadowHookInit() {
+    std::call_once(g_shadowhook_init_once, [] {
+        g_shadowhook_init_result = shadowhook_init(SHADOWHOOK_MODE_MULTI, false);
+        if (g_shadowhook_init_result == 0) {
+            LOGD("ShadowHook engine ready (multi mode).");
+        } else {
+            LOGE("ShadowHook init failed: %s",
+                 shadowhook_to_errmsg(shadowhook_get_init_errno()));
+        }
+    });
+    return g_shadowhook_init_result == 0;
+}
+#endif
+
+inline void LogInlineHook(int backend, void *address, bool installing) {
+    if constexpr (kIsDebugBuild) {
+        Dl_info info;
+        if (dladdr(address, &info)) {
+            LOGD("{} {} {} ({}) from {} ({})",
+                 backend == kInlineHookBackendShadowHook ? "ShadowHook" : "Dobby",
+                 installing ? "hooking" : "unhooking",
+                 info.dli_sname ? info.dli_sname : "(unknown symbol)",
+                 info.dli_saddr ? info.dli_saddr : address,
+                 info.dli_fname ? info.dli_fname : "(unknown file)", info.dli_fbase);
+        }
+    }
+}
+
 // The entry point function that native modules must export (`native_init`).
 using NativeInit = NativeOnModuleLoaded (*)(const NativeAPIEntries *entries);
 
-/**
- * @brief Installs the hooks required for the native API to function.
- * @param handler The LSPlant hook handler.
- * @return True on success, false on failure.
- */
+/** Installs the hooks required for the native API to function. */
 bool InstallNativeAPI(const lsplant::HookHandler &handler);
 
-/**
- * @brief Registers a native library by its filename for module initialization.
- *
- * When a library with a matching filename is loaded via `dlopen`, the runtime will attempt to
- * initialize it as a native module by calling its `native_init` function.
- *
- * @param library_name The filename of the native module's .so file (e.g., "libmymodule.so").
- */
+/** Registers a native library by its filename for module initialization. */
 void RegisterNativeLib(const std::string &library_name);
 
-/**
- * @brief A wrapper around DobbyHook.
- */
+/** A wrapper around the configured inline hook backend. */
 inline int HookInline(void *original, void *replace, void **backup) {
-    if constexpr (kIsDebugBuild) {
-        Dl_info info;
-        if (dladdr(original, &info)) {
-            LOGD("Dobby hooking {} ({}) from {} ({})",
-                 info.dli_sname ? info.dli_sname : "(unknown symbol)",
-                 info.dli_saddr ? info.dli_saddr : original,
-                 info.dli_fname ? info.dli_fname : "(unknown file)", info.dli_fbase);
+#if defined(__aarch64__) || defined(__arm__)
+    if (g_inline_hook_backend.load(std::memory_order_relaxed) == kInlineHookBackendShadowHook) {
+        if (ShadowHookInit()) {
+            // MULTI mode requires a persistent orig_addr slot. Do not silently switch to Dobby
+            // when ShadowHook rejects a hook: that can stack a second backend on one entry point.
+            if (backup == nullptr) {
+                LOGE("ShadowHook MULTI mode requires a non-null backup slot for %p", original);
+                return -1;
+            }
+            LogInlineHook(kInlineHookBackendShadowHook, original, true);
+            const int status = g_inline_hook_registry.InstallHook(
+                reinterpret_cast<uintptr_t>(original), InlineHookBackendKind::kShadowHook, [&] {
+                    void *stub = shadowhook_hook_func_addr(original, replace, backup);
+                    return std::make_pair(stub == nullptr ? -1 : 0, stub);
+                });
+            if (status != 0) {
+                LOGE("ShadowHook failed for %p: %s", original, shadowhook_to_errmsg(shadowhook_get_errno()));
+            }
+            return status;
         }
+        // Initialization failure is the only ShadowHook path that may fall back to Dobby.
+        LOGW("ShadowHook initialization unavailable; using Dobby for %p", original);
     }
+#endif
+    LogInlineHook(kInlineHookBackendDobby, original, true);
+#if defined(__aarch64__) || defined(__arm__)
+    return g_inline_hook_registry.InstallHook(
+        reinterpret_cast<uintptr_t>(original), InlineHookBackendKind::kDobby, [&] {
+            const int status = DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
+                                         reinterpret_cast<dobby_dummy_func_t *>(backup));
+            return std::make_pair(status, static_cast<void *>(nullptr));
+        });
+#else
     return DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
                      reinterpret_cast<dobby_dummy_func_t *>(backup));
+#endif
 }
 
-/**
- * @brief A wrapper around DobbyDestroy.
- */
+/** A wrapper around the configured inline hook backend. */
 inline int UnhookInline(void *original) {
-    if constexpr (kIsDebugBuild) {
-        Dl_info info;
-        if (dladdr(original, &info)) {
-            LOGD("Dobby unhooking {} ({}) from {} ({})",
-                 info.dli_sname ? info.dli_sname : "(unknown symbol)",
-                 info.dli_saddr ? info.dli_saddr : original,
-                 info.dli_fname ? info.dli_fname : "(unknown file)", info.dli_fbase);
-        }
-    }
+#if defined(__aarch64__) || defined(__arm__)
+    const uintptr_t target = reinterpret_cast<uintptr_t>(original);
+    const auto result = g_inline_hook_registry.UnhookLast(
+        target, [original](const InlineHookRegistry<void *>::Record &record) {
+            if (record.backend == InlineHookBackendKind::kShadowHook) {
+                if (shadowhook_unhook(record.stub) == 0) {
+                    LogInlineHook(kInlineHookBackendShadowHook, original, false);
+                    return true;
+                }
+                LOGE("ShadowHook unhook failed for %p: %s",
+                     original, shadowhook_to_errmsg(shadowhook_get_errno()));
+                return false;
+            }
+            LogInlineHook(kInlineHookBackendDobby, original, false);
+            const int status = DobbyDestroy(original);
+            if (status != 0) LOGE("Dobby unhook failed for %p: %d", original, status);
+            return status == 0;
+        });
+    if (result == InlineHookUnhookResult::kRemoved) return 0;
+    if (result == InlineHookUnhookResult::kFailed) return -1;
+    LOGE("No recorded inline hook backend for %p; refusing an ambiguous Dobby unhook", original);
+    return -1;
+#else
+    LogInlineHook(kInlineHookBackendDobby, original, false);
     return DobbyDestroy(original);
+#endif
 }
-
 }  // namespace vector::native

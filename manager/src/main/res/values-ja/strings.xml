@@ -413,4 +413,13 @@
     <string name="action_install_other_user_prompt_app">このアプリをインストールするユーザーを選択してください。</string>
     <string name="action_installed_other_user">%1$s にインストールしました。</string>
     <string name="action_install_other_user_failed">%1$s にインストールできませんでした。</string>
+    <string name="action_invalidate_art_inline_hooks">ART インラインフック互換モード</string>
+    <string name="action_invalidate_art_inline_hooks_summary">選択した各アプリで Aevix の ART インラインフックをグローバルに無効化します。対象にするモジュールやフックの数には依存しません。一部のモジュールが動作しなくなり、アプリが誤動作またはクラッシュする可能性があります。各アプリの次回起動時に適用されます。</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">%1$s の ART インラインフック互換モードを有効にしました。</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">%1$s の ART インラインフック互換モードを無効にしました。</string>
+    <string name="action_invalidate_art_inline_hooks_failed">%1$s の ART インラインフック互換モードを変更できませんでした。</string>
+    <string name="inline_hook_backend_title">Inline hook backend</string>
+    <string name="inline_hook_backend_summary">Which engine installs native inline hooks. New processes use the chosen engine; a reboot applies it to everything already running.</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
 </resources>

@@ -11,8 +11,12 @@ import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.ObjectStreamClass
 import org.aevix.daemon.BuildConfig
+import org.aevix.daemon.system.*
 
 private const val TAG = "AevixPreferenceStore"
+private const val INVALIDATE_ART_INLINE_HOOKS_KEY_PREFIX = "invalidate_art_inline_hooks:"
+const val SYSTEM_UI_VIRTUAL_PACKAGE = "system"
+const val SYSTEM_UI_PROCESS = "system:ui"
 private const val MAX_PREFERENCE_BLOB_SIZE = 1024 * 1024
 
 private val allowedPreferenceClasses =
@@ -190,4 +194,45 @@ object PreferenceStore {
   fun isScopeRequestBlocked(pkg: String): Boolean =
       (getModulePrefs("lspd", 0, "config")["scope_request_blocked"] as? Set<*>)?.contains(pkg) ==
           true
+  
+  fun getInlineHookBackend(): Int =
+      getModulePrefs("lspd", 0, "config")["inline_hook_backend"] as? Int ?: 0
+
+  fun setInlineHookBackend(backend: Int) =
+      updateModulePref("lspd", 0, "config", "inline_hook_backend", backend)
+
+  fun getInvalidateArtInlineHookPackages(): Set<String> =
+      getModulePrefs("lspd", 0, "config")
+          .asSequence()
+          .filter { (key, value) -> key.startsWith(INVALIDATE_ART_INLINE_HOOKS_KEY_PREFIX) && value == true }
+          .map { (key, _) -> key.removePrefix(INVALIDATE_ART_INLINE_HOOKS_KEY_PREFIX) }
+          .filter { it.isNotBlank() }
+          .toSet()
+
+  fun setInvalidateArtInlineHooks(packageName: String, enabled: Boolean): Boolean {
+    val normalized = packageName.trim()
+    if (normalized.isEmpty()) return false
+    updateModulePref("lspd", 0, "config", INVALIDATE_ART_INLINE_HOOKS_KEY_PREFIX + normalized,
+        if (enabled) true else null)
+    return true
+  }
+
+  fun shouldInvalidateArtInlineHooks(processName: String, uid: Int): Boolean {
+    val configured = getInvalidateArtInlineHookPackages()
+    if (configured.isEmpty()) return false
+    if (InlineHookProcessPolicy.matchesSystemUiVirtualPackage(configured, processName, uid)) return true
+    val userId = uid / PER_USER_RANGE
+    return configured.any { packageName ->
+      if (packageName == SYSTEM_UI_VIRTUAL_PACKAGE) return@any false
+      val info = packageManager?.getPackageInfoWithComponents(packageName, MATCH_ALL_FLAGS, userId)
+          ?: return@any false
+      val appInfo = info.applicationInfo ?: return@any false
+      InlineHookProcessPolicy.matchesPackage(
+          expectedUid = appInfo.uid,
+          actualUid = uid,
+          processName = processName,
+          applicationProcessName = appInfo.processName,
+          componentProcesses = info.fetchProcesses())
+    }
+  }
 }

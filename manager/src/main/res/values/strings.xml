@@ -478,4 +478,14 @@
     <string name="action_install_other_user_prompt_app">Choose the user to install this app for.</string>
     <string name="action_installed_other_user">Installed for %1$s.</string>
     <string name="action_install_other_user_failed">Could not install for %1$s.</string>
+    <string name="inline_hook_backend_title">Inline hook backend</string>
+    <string name="inline_hook_backend_summary">Used by processes started after this setting changes.</string>
+    <string name="inline_hook_backend_dobby">Dobby</string>
+    <string name="inline_hook_backend_shadowhook">ShadowHook</string>
+    <!-- ART inline hook compatibility mode -->
+    <string name="action_invalidate_art_inline_hooks">ART inline hook compatibility mode</string>
+    <string name="action_invalidate_art_inline_hooks_summary">Invalidate Aevix ART inline hooks globally in each selected app, regardless of how many modules or hooks target it. Some modules may stop working, and apps may misbehave or crash. Applies the next time each app starts.</string>
+    <string name="action_invalidate_art_inline_hooks_enabled">Enabled ART inline hook compatibility for %1$s.</string>
+    <string name="action_invalidate_art_inline_hooks_disabled">Disabled ART inline hook compatibility for %1$s.</string>
+    <string name="action_invalidate_art_inline_hooks_failed">Could not change ART inline hook compatibility for %1$s.</string>
 </resources>

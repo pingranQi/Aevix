@@ -326,6 +326,17 @@ class FakeManagerService(
 
     override fun setIncludeNewApps(packageName: String?, userId: Int, enable: Boolean): Boolean =
         real?.setIncludeNewApps(packageName, userId, enable) ?: false
+
+    override fun getInlineHookBackend(): Int = real?.inlineHookBackend ?: 0
+    override fun setInlineHookBackend(backend: Int) {
+        real?.setInlineHookBackend(backend)
+    }
+
+    override fun getInvalidateArtInlineHookPackages(): MutableList<String> =
+        real?.invalidateArtInlineHookPackages?.toMutableList() ?: mutableListOf()
+
+    override fun setInvalidateArtInlineHooks(packageName: String?, enabled: Boolean): Boolean =
+        real?.setInvalidateArtInlineHooks(packageName, enabled) ?: false
 }
 
 /**
@@ -339,4 +350,5 @@ class FakeManagerService(
 private fun PackageInfo.setVersionCodeCompat(value: Long) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) longVersionCode = value
     else versionCode = value.toInt()
+
 }

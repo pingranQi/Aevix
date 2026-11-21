@@ -89,6 +89,8 @@ constexpr auto kBridgeServiceName = "activity"sv;
 constexpr jint kBridgeTransactionCode = ('_' << 24) | ('V' << 16) | ('E' << 8) | 'C';
 constexpr jint kDexTransactionCode = ('_' << 24) | ('D' << 16) | ('E' << 8) | 'X';
 constexpr jint kObfuscationMapTransactionCode = ('_' << 24) | ('O' << 16) | ('B' << 8) | 'F';
+constexpr jint kInlineHookBackendTransactionCode = ('_' << 24) | ('I' << 16) | ('H' << 8) | 'B';
+constexpr jint kInvalidateArtInlineHooksTransactionCode = ('_' << 24) | ('I' << 16) | ('N' << 8) | 'L';
 
 // Action codes sent within a kBridgeTransactionCode transaction.
 constexpr jint kActionGetBinder = 2;
@@ -492,6 +494,45 @@ std::map<std::string, std::string> IPCBridge::ReadObfuscationMap(JNIEnv *env, jo
     }
 
     return result_map;
+}
+
+int IPCBridge::FetchInlineHookBackend(JNIEnv *env, jobject binder) {
+    if (!initialized_ || !binder) return 0;
+    ParcelWrapper parcels(env, this);
+    if (!parcels.data || !parcels.reply) return 0;
+    const bool success = lsplant::JNI_CallBooleanMethod(
+        env, binder, transact_method_, kInlineHookBackendTransactionCode,
+        parcels.data.get(), parcels.reply.get(), 0);
+    if (!success) {
+        LOGW("Inline-hook backend query failed; using Dobby.");
+        return 0;
+    }
+    lsplant::JNI_CallVoidMethod(env, parcels.reply.get(), read_exception_method_);
+    if (env->ExceptionCheck()) {
+        LOGW("Remote exception while querying inline-hook backend; using Dobby.");
+        env->ExceptionClear();
+        return 0;
+    }
+    return lsplant::JNI_CallIntMethod(env, parcels.reply.get(), read_int_method_) == 1 ? 1 : 0;
+}
+bool IPCBridge::ShouldInvalidateArtInlineHooks(JNIEnv *env, jobject binder) {
+    if (!initialized_ || !binder) return false;
+    ParcelWrapper parcels(env, this);
+    if (!parcels.data || !parcels.reply) return false;
+    const bool success = lsplant::JNI_CallBooleanMethod(
+        env, binder, transact_method_, kInvalidateArtInlineHooksTransactionCode,
+        parcels.data.get(), parcels.reply.get(), 0);
+    if (!success) {
+        LOGW("ART inline-hook invalidation policy query failed.");
+        return false;
+    }
+    lsplant::JNI_CallVoidMethod(env, parcels.reply.get(), read_exception_method_);
+    if (env->ExceptionCheck()) {
+        LOGW("Remote exception while querying ART inline-hook invalidation policy.");
+        env->ExceptionClear();
+        return false;
+    }
+    return lsplant::JNI_CallIntMethod(env, parcels.reply.get(), read_int_method_) != 0;
 }
 
 jboolean IPCBridge::ExecTransact_Replace(jboolean *res, JNIEnv *env, jobject obj, va_list args) {

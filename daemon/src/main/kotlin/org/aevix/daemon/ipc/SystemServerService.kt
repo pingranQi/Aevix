@@ -195,7 +195,9 @@ object SystemServerService : Binder(), IBinder.DeathRecipient {
         return false
       }
       DEX_TRANSACTION_CODE,
-      OBFUSCATION_MAP_TRANSACTION_CODE -> {
+      OBFUSCATION_MAP_TRANSACTION_CODE,
+      INLINE_HOOK_TRANSACTION_CODE,
+      INVALIDATE_ART_INLINE_HOOKS_TRANSACTION_CODE -> {
         return FrameworkService.onTransact(code, data, reply, flags)
       }
       else -> {
