@@ -171,28 +171,46 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
      * original.
      */
     fun callback(args: Array<Any?>): Any? {
-        return try {
-            dispatch(args)
-        } catch (t: Throwable) {
-            Utils.logE("Hook chain for $method failed; running the original", t)
+        // Track the terminal invocation. If a post-hook throws after chain.proceed() has already
+        // called the original, replaying the original here would execute the method twice (for
+        // example, duplicate a package operation or a system-server state transition).
+        var originalInvoked = false
+        var originalResult: Any? = null
+        var originalFailure: Throwable? = null
+        val callOriginal: (Any?, Array<Any?>) -> Any? = { target, actualArgs ->
+            originalInvoked = true
             try {
-                if (isStatic) {
-                    invokeOriginalSafely(null, args)
-                } else {
-                    invokeOriginalSafely(
-                        args.firstOrNull(),
-                        if (args.size <= 1) EMPTY_HOOK_ARGUMENTS else args.copyOfRange(1, args.size),
-                    )
-                }
-            } catch (fallback: Throwable) {
-                // The original threw as well. That is its own answer and the caller is entitled to
-                // it, so it is handed over rather than swallowed.
-                throw fallback
+                invokeOriginalSafely(target, actualArgs).also { originalResult = it }
+            } catch (failure: Throwable) {
+                originalFailure = failure
+                throw failure
+            }
+        }
+
+        return try {
+            dispatch(args, callOriginal)
+        } catch (t: Throwable) {
+            Utils.logE("Hook chain for $method failed; preserving original execution", t)
+            if (originalInvoked) {
+                // The original already ran. Preserve its result (or its own exception) and never
+                // call it a second time just because a later hook failed.
+                originalFailure?.let { throw it }
+                originalResult
+            } else {
+                val thisObject = if (isStatic) null else args.firstOrNull()
+                val actualArgs =
+                    if (isStatic) args
+                    else if (args.size <= 1) EMPTY_HOOK_ARGUMENTS
+                    else args.copyOfRange(1, args.size)
+                callOriginal(thisObject, actualArgs)
             }
         }
     }
 
-    private fun dispatch(args: Array<Any?>): Any? {
+    private fun dispatch(
+        args: Array<Any?>,
+        callOriginal: (Any?, Array<Any?>) -> Any?,
+    ): Any? {
         val thisObject = if (isStatic) null else args.firstOrNull()
         val actualArgs =
             when {
@@ -207,7 +225,7 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
         // Null means every hook was removed after this trampoline was entered.
         val snapshots =
             HookBridge.callbackSnapshot(AevixHookRecord::class.java, method)
-                ?: return invokeOriginalSafely(thisObject, actualArgs)
+                ?: return callOriginal(thisObject, actualArgs)
 
         @Suppress("UNCHECKED_CAST") val modernHooks = snapshots[0] as Array<AevixHookRecord>
         val legacyHooks = snapshots[1]
@@ -221,10 +239,10 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
             val delegate = AevixBootstrap.delegate
             if (legacyHooks.isNotEmpty() && delegate != null) {
                 delegate.processLegacyHook(method, tObj, tArgs, legacyHooks) {
-                    invokeOriginalSafely(tObj, tArgs)
+                    callOriginal(tObj, tArgs)
                 }
             } else {
-                invokeOriginalSafely(tObj, tArgs)
+                callOriginal(tObj, tArgs)
             }
         }
 
