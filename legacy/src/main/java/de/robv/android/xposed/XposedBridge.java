@@ -62,7 +62,7 @@ public final class XposedBridge {
 
     public static volatile ClassLoader dummyClassLoader = null;
 
-    public static void initXResources() {
+    public static synchronized void initXResources() {
         if (dummyClassLoader != null) {
             return;
         }
