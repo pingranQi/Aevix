@@ -25,6 +25,7 @@ bool g_art_invalidation_completed = false;
 struct LibArtRestoreResult {
     bool found = false;
     bool success = false;
+    bool rollback_success = true;
     size_t executable_segments = 0;
     size_t modified_pages = 0;
     size_t restored_bytes = 0;
@@ -426,6 +427,7 @@ bool RestoreExecutableSegments(const dl_phdr_info *info, LibArtRestoreResult &re
         for (auto it = applied_segments.rbegin(); it != applied_segments.rend(); ++it) {
             if (!RollbackExecutableSegment(*it, fd)) rollback_success = false;
         }
+        result.rollback_success = rollback_success;
         if (!rollback_success) {
             LOGE("ART invalidation failed and at least one executable segment could not be rolled back");
         } else {
@@ -529,11 +531,16 @@ bool InvalidateArtInlineHooksIfEnabled() {
     // ART maintenance hooks no longer execute afterwards.
     const LibArtRestoreResult result = RestoreLibArtExecutableBytes();
     if (!result.success) {
-        g_art_inline_hook_targets.clear();
-        g_preserved_art_pages.clear();
+        // Only discard the retry/diagnostic state after a complete rollback. If rollback itself
+        // failed, retain the target and preserved-page metadata so the damaged process state is
+        // diagnosable rather than silently presenting an empty invalidation record.
+        if (result.rollback_success) {
+            g_art_inline_hook_targets.clear();
+            g_preserved_art_pages.clear();
+        }
         g_art_invalidation_enabled = false;
-        LOGW("libart.so executable-byte invalidation failed; ART inline-hook invalidation mode "
-             "was not fully applied in this process.");
+        LOGW("libart.so executable-byte invalidation failed; rollback {}.",
+             result.rollback_success ? "completed" : "was incomplete; diagnostic state retained");
         return false;
     }
 
