@@ -524,14 +524,26 @@ object ConfigCache {
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
 
       // Targets are removed only after the module set has been published.
-      (oldState.modules.keys - newModules.keys).forEach {
-        FrameworkService.forgetHotReloadTargets(it)
+      (oldState.modules.keys - newModules.keys).forEach { packageName ->
+        runCatching { FrameworkService.forgetHotReloadTargets(packageName) }
+            .onFailure {
+              Log.e(TAG, "Failed to retire hot-reload targets for $packageName", it)
+            }
       }
-      ModuleAppService.forgetReplacedModules(newModules)
-      FrameworkService.backfillLoadedVersions()
+      runCatching { ModuleAppService.forgetReplacedModules(newModules) }
+          .onFailure { Log.e(TAG, "Failed to retire replaced module services", it) }
+      runCatching { FrameworkService.backfillLoadedVersions() }
+          .onFailure { Log.e(TAG, "Failed to backfill loaded module versions", it) }
 
-      // Ask stale opt-in targets to load the generation that was just installed.
-      newModules.values.forEach { ModuleAppService.autoHotReload(it) }
+      // These are post-publication notifications. A failure in one module must not turn an
+      // already-published cache snapshot into a failed build or prevent the other modules from
+      // receiving their reload request.
+      newModules.values.forEach { module ->
+        runCatching { ModuleAppService.autoHotReload(module) }
+            .onFailure {
+              Log.e(TAG, "Failed to request hot reload for ${module.packageName}", it)
+            }
+      }
       true
       // Log.d(TAG, "cached modules:")
       // newModules.forEach { (pkg, mod) -> Log.d(TAG, "$pkg ${mod.apkPath}") }
