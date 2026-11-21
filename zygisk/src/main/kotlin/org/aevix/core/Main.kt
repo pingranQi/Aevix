@@ -75,7 +75,7 @@ object Main {
                             android.util.Log.i("AevixDiag", "fallback system-server init using $classLoader")
                             runCatching {
                                     org.aevix.impl.hookers.HandleSystemServerProcessHooker
-                                        .initSystemServer(classLoader, isLate = false)
+                                        .initSystemServer(classLoader, isLate = isLateInject)
                                 }
                                 .onFailure {
                                     android.util.Log.e("AevixDiag", "fallback system-server init failed", it)
