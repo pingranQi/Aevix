@@ -434,7 +434,7 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
     do {
         // Call the native android::ResXMLParser::next() function via our pointer.
         switch (ResXMLParser_next(parser)) {
-        case android::ResXMLParser::START_TAG:
+        case android::ResXMLParser::START_TAG: {
             tag = (android::ResXMLTree_attrExt *)parser->mCurExt;
             // A START_TAG with no extension is a tree this code does not describe. Reading
             // `attributeCount` out of null is the first word of the header page.
@@ -515,6 +515,7 @@ AEVIX_DEF_NATIVE_METHOD(void, ResourcesHook, rewriteXmlReferencesNative, jlong p
                 if (newValue != oldValue) attr->typedValue.data = newValue;
             }
             continue;
+        }
         case android::ResXMLParser::END_DOCUMENT:
         case android::ResXMLParser::BAD_DOCUMENT:
             goto leave;  // Exit the loop.
