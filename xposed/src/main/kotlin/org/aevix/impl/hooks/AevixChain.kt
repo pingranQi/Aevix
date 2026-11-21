@@ -66,10 +66,28 @@ class AevixChain(
 
     override fun proceed(currentArgs: Array<Any?>): Any? = internalProceed(thisObj, currentArgs)
 
-    override fun proceedWith(thisObject: Any): Any? = internalProceed(thisObject, args)
+    override fun proceedWith(thisObject: Any): Any? {
+        validateReceiver(thisObject)
+        return internalProceed(thisObject, args)
+    }
 
-    override fun proceedWith(thisObject: Any, currentArgs: Array<Any?>): Any? =
-        internalProceed(thisObject, currentArgs)
+    override fun proceedWith(thisObject: Any, currentArgs: Array<Any?>): Any? {
+        validateReceiver(thisObject)
+        return internalProceed(thisObject, currentArgs)
+    }
+
+    /**
+     * The API contract keeps a chain bound to its original executable: changing the receiver
+     * must never silently switch to an unrelated object or another executable's hook chain.
+     */
+    private fun validateReceiver(thisObject: Any) {
+        if (!executable.declaringClass.isInstance(thisObject)) {
+            throw IllegalArgumentException(
+                "Expected receiver of type ${executable.declaringClass.typeName}, " +
+                    "but got ${thisObject.javaClass.typeName}"
+            )
+        }
+    }
 
     private fun internalProceed(thisObject: Any?, currentArgs: Array<Any?>): Any? {
         proceedCalled = true
