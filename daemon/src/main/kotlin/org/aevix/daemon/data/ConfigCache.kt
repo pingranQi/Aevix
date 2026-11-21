@@ -215,7 +215,7 @@ object ConfigCache {
 
   /** Builds a completely new Immutable State and atomically swaps it. */
   private fun performCacheUpdate(): Boolean {
-    synchronized(rebuildLock) {
+    return synchronized(rebuildLock) {
       val packageManagerBinder = packageManager?.asBinder() ?: return false
       if (!packageManagerBinder.isBinderAlive) return false
 
