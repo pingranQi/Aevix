@@ -170,29 +170,32 @@ inline int HookInline(void *original, void *replace, void **backup) {
                 return -1;
             }
             LogInlineHook(kInlineHookBackendShadowHook, original, true);
-            void *stub = shadowhook_hook_func_addr(original, replace, backup);
-            if (stub == nullptr) {
+            const int status = g_inline_hook_registry.InstallHook(
+                reinterpret_cast<uintptr_t>(original), InlineHookBackendKind::kShadowHook, [&] {
+                    void *stub = shadowhook_hook_func_addr(original, replace, backup);
+                    return std::make_pair(stub == nullptr ? -1 : 0, stub);
+                });
+            if (status != 0) {
                 LOGE("ShadowHook failed for %p: %s", original, shadowhook_to_errmsg(shadowhook_get_errno()));
-                return -1;
             }
-            g_inline_hook_registry.Add(reinterpret_cast<uintptr_t>(original),
-                                       InlineHookBackendKind::kShadowHook, stub);
-            return 0;
+            return status;
         }
         // Initialization failure is the only ShadowHook path that may fall back to Dobby.
         LOGW("ShadowHook initialization unavailable; using Dobby for %p", original);
     }
 #endif
     LogInlineHook(kInlineHookBackendDobby, original, true);
-    const int result = DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
-                                 reinterpret_cast<dobby_dummy_func_t *>(backup));
 #if defined(__aarch64__) || defined(__arm__)
-    if (result == 0) {
-        g_inline_hook_registry.Add(reinterpret_cast<uintptr_t>(original),
-                                   InlineHookBackendKind::kDobby, nullptr);
-    }
+    return g_inline_hook_registry.InstallHook(
+        reinterpret_cast<uintptr_t>(original), InlineHookBackendKind::kDobby, [&] {
+            const int status = DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
+                                         reinterpret_cast<dobby_dummy_func_t *>(backup));
+            return std::make_pair(status, static_cast<void *>(nullptr));
+        });
+#else
+    return DobbyHook(original, reinterpret_cast<dobby_dummy_func_t>(replace),
+                     reinterpret_cast<dobby_dummy_func_t *>(backup));
 #endif
-    return result;
 }
 
 /** A wrapper around the configured inline hook backend. */
@@ -217,8 +220,11 @@ inline int UnhookInline(void *original) {
         });
     if (result == InlineHookUnhookResult::kRemoved) return 0;
     if (result == InlineHookUnhookResult::kFailed) return -1;
-#endif
+    LOGE("No recorded inline hook backend for %p; refusing an ambiguous Dobby unhook", original);
+    return -1;
+#else
     LogInlineHook(kInlineHookBackendDobby, original, false);
     return DobbyDestroy(original);
+#endif
 }
 }  // namespace vector::native

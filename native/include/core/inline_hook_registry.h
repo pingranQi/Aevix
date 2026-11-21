@@ -24,9 +24,16 @@ public:
         Stub stub;
     };
 
-    void Add(uintptr_t target, InlineHookBackendKind backend, Stub stub) {
+    template <typename Install>
+    int InstallHook(uintptr_t target, InlineHookBackendKind backend, Install &&install) {
+        // Keep installation and registration atomic with respect to UnhookLast. Otherwise an
+        // unhook racing between the native hook call and Add() could dispatch to the wrong backend.
         std::lock_guard<std::mutex> lock(mutex_);
-        records_[target].push_back(Record{backend, std::move(stub)});
+        auto result = install();
+        if (result.first == 0) {
+            records_[target].push_back(Record{backend, std::move(result.second)});
+        }
+        return result.first;
     }
 
     template <typename Unhook>

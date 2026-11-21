@@ -3,14 +3,19 @@
 #include <cassert>
 #include <cstdint>
 #include <vector>
+#include <utility>
 
 using namespace vector::native;
 
 int main() {
     InlineHookRegistry<int> registry;
     constexpr uintptr_t target = 0x1000;
-    registry.Add(target, InlineHookBackendKind::kShadowHook, 11);
-    registry.Add(target, InlineHookBackendKind::kShadowHook, 22);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
+               return std::make_pair(0, 11);
+           }) == 0);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
+               return std::make_pair(0, 22);
+           }) == 0);
     std::vector<int> removed;
     auto remove = [&](const InlineHookRegistry<int>::Record &record) {
         removed.push_back(record.stub);
@@ -21,7 +26,12 @@ int main() {
     assert((removed == std::vector<int>{22, 11}));
     assert(registry.UnhookLast(target, remove) == InlineHookUnhookResult::kNotFound);
 
-    registry.Add(target, InlineHookBackendKind::kShadowHook, 33);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
+               return std::make_pair(0, 33);
+           }) == 0);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
+               return std::make_pair(-1, 99);
+           }) == -1);
     assert(registry.UnhookLast(target, [](const auto &) { return false; }) ==
            InlineHookUnhookResult::kFailed);
     int retried_stub = 0;
@@ -31,8 +41,12 @@ int main() {
            }) == InlineHookUnhookResult::kRemoved);
     assert(retried_stub == 33);
 
-    registry.Add(target, InlineHookBackendKind::kShadowHook, 44);
-    registry.Add(target, InlineHookBackendKind::kDobby, 0);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kShadowHook, [] {
+               return std::make_pair(0, 44);
+           }) == 0);
+    assert(registry.InstallHook(target, InlineHookBackendKind::kDobby, [] {
+               return std::make_pair(0, 0);
+           }) == 0);
     std::vector<InlineHookBackendKind> backends;
     auto remove_backend = [&](const auto &record) {
         backends.push_back(record.backend);
@@ -44,7 +58,9 @@ int main() {
     assert(backends[0] == InlineHookBackendKind::kDobby);
     assert(backends[1] == InlineHookBackendKind::kShadowHook);
 
-    registry.Add(0x2000, InlineHookBackendKind::kDobby, 0);
+    assert(registry.InstallHook(0x2000, InlineHookBackendKind::kDobby, [] {
+               return std::make_pair(0, 0);
+           }) == 0);
     assert(registry.UnhookLast(target, remove_backend) == InlineHookUnhookResult::kNotFound);
     assert(registry.UnhookLast(0x2000, remove_backend) == InlineHookUnhookResult::kRemoved);
     return 0;

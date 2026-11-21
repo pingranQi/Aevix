@@ -12,4 +12,5 @@ assert "InlineHookBackendKind::kShadowHook" in source
 assert "InlineHookBackendKind::kDobby" in source
 assert "InlineHookUnhookResult::kFailed" in source
 assert "InlineHookRegistry<void *>::Record" in source
-assert "g_inline_hook_registry.Add" in source
+assert "g_inline_hook_registry.InstallHook" in source
+assert "No recorded inline hook backend" in source
