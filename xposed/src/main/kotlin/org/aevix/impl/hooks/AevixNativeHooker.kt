@@ -232,7 +232,7 @@ class AevixNativeHooker<T : Executable>(private val method: T) {
 
         // Fast path: No hooks active
         if (modernHooks.isEmpty() && legacyHooks.isEmpty()) {
-            return invokeOriginalSafely(thisObject, actualArgs)
+            return callOriginal(thisObject, actualArgs)
         }
 
         val terminal: (Any?, Array<Any?>) -> Any? = { tObj, tArgs ->
