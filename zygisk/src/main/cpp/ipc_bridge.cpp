@@ -569,6 +569,14 @@ jboolean IPCBridge::ExecTransact_Replace(jboolean *res, JNIEnv *env, jobject obj
     return false;  // Not our transaction, let the original method run.
 }
 
+    //
+    // `find` rather than `at`: see `SetupEntryClass`. This one runs inside `system_server` during
+    // its specialization, so an out_of_range here aborts the framework before it has started.
+    const auto service_prefix = obfs_map.find("org.aevix.service.");
+    bridge_service_class_name =
+        (service_prefix == obfs_map.end() ? std::string("org.aevix.service.")
+                                          : service_prefix->second) +
+        "BridgeService";
 namespace {
 
 /**
