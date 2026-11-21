@@ -40,6 +40,10 @@ object CliSocketServer {
         // Bind it to the filesystem path
         val address = LocalSocketAddress(cliSocketPath, LocalSocketAddress.Namespace.FILESYSTEM)
         rootSocket.bind(address)
+        // The daemon runs as root, often with umask 0. The token is embedded in both
+        // binaries and is not a security boundary; restrict the filesystem socket itself.
+        runCatching { Os.chmod(cliSocketPath, "600".toInt(8)) }
+            .onFailure { Log.w(TAG, "Could not restrict the CLI socket to its owner", it) }
 
         // LocalServerSocket(FileDescriptor) requires the FD to already be listening.
         Os.listen(rootSocket.fileDescriptor, 50)
