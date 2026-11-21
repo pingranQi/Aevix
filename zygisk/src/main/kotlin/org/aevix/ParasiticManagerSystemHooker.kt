@@ -83,13 +83,38 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                                 return@intercept result
                             }
 
-                            val originalActivityInfo = result as? ActivityInfo
-                                ?: run {
-                                    Utils.logD(
-                                        "Redirection: result is not ActivityInfo (was ${result?.javaClass?.name})"
-                                    )
-                                    return@intercept result
+                            // Most releases return ActivityInfo directly. Some ROMs wrap it
+                            // in a result object; update the wrapped field as well so the caller
+                            // receives the redirected process name in either representation.
+                            var holder: Any? = null
+                            val originalActivityInfo: ActivityInfo? =
+                                when (result) {
+                                    is ActivityInfo -> result
+                                    else ->
+                                        result?.javaClass?.let { resultClass ->
+                                            val field =
+                                                runCatching {
+                                                    resultClass.getDeclaredField("activityInfo")
+                                                        .apply { isAccessible = true }
+                                                }.getOrNull()
+                                            val value =
+                                                if (field == null) null
+                                                else runCatching { field.get(result) as? ActivityInfo }.getOrNull()
+                                            if (value != null) holder = result
+                                            value
+                                        }
                                 }
+                            if (originalActivityInfo == null) {
+                                android.util.Log.e(
+                                    "AevixDiag",
+                                    "resolveActivity result has no ActivityInfo: ${result?.javaClass?.name}",
+                                )
+                                return@intercept result
+                            }
+                            android.util.Log.i(
+                                "AevixDiag",
+                                "manager resolve hit result=${result?.javaClass?.name} package=${originalActivityInfo.packageName}",
+                            )
                             if (originalActivityInfo.packageName != BuildConfig.InjectedPackageName) {
                                 return@intercept result
                             }
@@ -103,7 +128,18 @@ class ParasiticManagerSystemHooker : HandleSystemServerProcessHooker.Callback {
                                 ).inv()
                             }
                             BridgeService.getService()?.preStartManager()
-                            redirectedInfo
+                            if (holder != null) {
+                                runCatching {
+                                    holder!!.javaClass.getDeclaredField("activityInfo")
+                                        .apply { isAccessible = true }
+                                        .set(holder, redirectedInfo)
+                                }.onFailure {
+                                    android.util.Log.e("AevixDiag", "failed to update wrapped ActivityInfo", it)
+                                }
+                                holder
+                            } else {
+                                redirectedInfo
+                            }
                         }
                     }.onFailure {
                         Utils.logE(
