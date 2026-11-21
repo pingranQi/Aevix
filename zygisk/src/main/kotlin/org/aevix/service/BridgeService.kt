@@ -7,8 +7,10 @@ import android.os.IBinder.DeathRecipient
 import android.os.Parcel
 import hidden.HiddenApiBridge.Binder_allowBlocking
 import hidden.HiddenApiBridge.Context_getActivityToken
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Callable
-import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import org.aevix.ipc.IAevixDaemon
@@ -46,12 +48,15 @@ object BridgeService {
      * it replied. Sixteen of those at once is the whole pool, and a framework with no free binder
      * thread is a framework the watchdog kills.
      *
-     * Cached, so a daemon that stops answering costs threads rather than correctness: each waiter is
-     * abandoned after [ATTACH_TIMEOUT_MS] and its task finishes or does not, on its own.
+     * Bounded so a daemon that stops answering cannot cause unbounded thread growth. Rejected
+     * work fails closed: that process starts without injection rather than consuming the Binder pool.
      */
-    private val attachCalls = Executors.newCachedThreadPool { runnable ->
-        Thread(runnable, "aevix-bridge-attach").apply { isDaemon = true }
-    }
+    private val attachCalls = ThreadPoolExecutor(
+        4, 8, 30L, TimeUnit.SECONDS,
+        ArrayBlockingQueue(16),
+        { runnable -> Thread(runnable, "aevix-bridge-attach").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
 
     /** How long `system_server` will hold a binder thread waiting for the daemon's answer. */
     private const val ATTACH_TIMEOUT_MS = 2000L
@@ -142,31 +147,37 @@ object BridgeService {
                             // Bound outside the lambda: the AIDL parameter is non-null at the
                             // Kotlin level, and a smart cast does not survive the capture.
                             val heartbeat = heartBeat
-                            val pending =
-                                attachCalls.submit(
-                                    Callable {
-                                        runCatching {
-                                                daemon
-                                                    .attachProcess(
-                                                        callerUid, callerPid, processName, heartbeat
-                                                    )
-                                                    ?.asBinder()
-                                            }
-                                            .getOrNull()
-                                    })
-                            runCatching { pending.get(ATTACH_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
-                                .onFailure {
-                                    if (it is TimeoutException) {
-                                        // Answering "no" costs this one process its modules.
-                                        // Not answering costs the framework its binder pool.
-                                        Log.w(
-                                            TAG,
-                                            "Daemon did not answer within ${ATTACH_TIMEOUT_MS}ms" +
-                                                " for $processName; starting it unhooked",
-                                        )
-                                    }
+                            try {
+                                val pending =
+                                    attachCalls.submit(
+                                        Callable {
+                                            runCatching {
+                                                    daemon
+                                                        .attachProcess(
+                                                            callerUid, callerPid, processName, heartbeat
+                                                        )
+                                                        ?.asBinder()
+                                                }
+                                                .getOrNull()
+                                        })
+                                try {
+                                    pending.get(ATTACH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                                } catch (timeout: TimeoutException) {
+                                    // Interrupt the worker where possible. A Binder call may ignore
+                                    // interruption, but the executor's hard thread/queue bounds still
+                                    // cap the damage if the daemon is wedged.
+                                    pending.cancel(true)
+                                    Log.w(
+                                        TAG,
+                                        "Daemon did not answer within ${ATTACH_TIMEOUT_MS}ms" +
+                                            " for $processName; starting it unhooked",
+                                    )
+                                    null
                                 }
-                                .getOrNull()
+                            } catch (rejected: RejectedExecutionException) {
+                                Log.w(TAG, "Bridge attach capacity exhausted; skipping $processName")
+                                null
+                            }
                         }
 
                     if (appBinder != null && reply != null) {
