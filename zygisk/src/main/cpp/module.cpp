@@ -218,8 +218,11 @@ void AevixModule::SetupEntryClass(JNIEnv *env) {
     const auto &obfs_map = ConfigBridge::GetInstance()->obfuscation_map();
     const auto entry_prefix = obfs_map.find("org.aevix.core.");
     std::string entry_class_name;
-    entry_class_name = (entry_prefix == obfs_map.end() ? std::string("org.aevix.core.")
-                                                       : entry_prefix->second) + "Main";
+    entry_class_name =
+        (entry_prefix == obfs_map.end() || entry_prefix->second.empty()
+             ? std::string("org.aevix.core.")
+             : entry_prefix->second) +
+        "Main";
 
     // We must find the class through our custom ClassLoader.
     auto entry_class = this->FindClassFromLoader(env, inject_class_loader_, entry_class_name);
