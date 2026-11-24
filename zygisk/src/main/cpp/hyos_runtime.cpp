@@ -451,6 +451,21 @@ void PrepareIndex() {
     if (g_registered) RefreshIndex();
 }
 
+void PrepareFork() {
+    // The loader hook runs in the spawner too. Take its registry lock before fork so the child
+    // cannot inherit it owned by a vanished loader thread.
+    if (g_native_api_ready) NativeAPIAtForkPrepare();
+    PrepareIndex();
+}
+
+void ParentAfterFork() {
+    if (g_native_api_ready) NativeAPIAtForkParent();
+}
+
+void ChildAfterFork() {
+    if (g_native_api_ready) NativeAPIAtForkChild();
+}
+
 void LoadModuleLibraries(const std::vector<LibraryEntry> &entries) {
     // The loader hook is installed in hyos_spawner before it forks. That process is still
     // single-threaded here, so its mutex and hook state are safe to inherit into app children.
@@ -737,7 +752,11 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
         // The table is fetched now so that the first fork has something to hand down, and again on
         // the parent side of every later fork. The hook is registered here rather than in the child
         // for the same reason the loader hook is: this runs before main, on one thread.
-        pthread_atfork(PrepareIndex, nullptr, nullptr);
+        if (pthread_atfork(PrepareFork, ParentAfterFork, ChildAfterFork) != 0) {
+        LOGW("AevixHyperRuntime: cannot register fork synchronization; disabling loader "
+             "interception and using direct native_init calls.");
+        g_native_api_ready = false;
+    }
         RefreshIndex();
     }
 }

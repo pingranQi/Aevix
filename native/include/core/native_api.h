@@ -175,6 +175,11 @@ bool InitializeNativeAPI(const lsplant::HookHandler &handler);
 /** Returns the immutable Native API table, or null before it has been initialized. */
 const NativeAPIEntries *GetNativeAPIEntries();
 
+/** Lock the native module registry around fork; pair with the parent/child callbacks below. */
+void NativeAPIAtForkPrepare();
+void NativeAPIAtForkParent();
+void NativeAPIAtForkChild();
+
 /** Registers a native library by its filename for module initialization. */
 void RegisterNativeLib(const std::string &library_name);
 

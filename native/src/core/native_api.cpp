@@ -83,7 +83,7 @@ namespace vector::native {
 
 namespace {
 // Mutex to protect access to the global module lists.
-std::mutex g_module_registry_mutex;
+std::recursive_mutex g_module_registry_mutex;
 std::mutex g_native_api_init_mutex;
 bool g_native_api_initialized = false;
 // List of callback functions provided by loaded native modules.
@@ -127,6 +127,10 @@ void InitializeApiEntries() {
 
 const NativeAPIEntries *GetNativeAPIEntries() { return g_native_api_entries; }
 
+void NativeAPIAtForkPrepare() { g_module_registry_mutex.lock(); }
+void NativeAPIAtForkParent() { g_module_registry_mutex.unlock(); }
+void NativeAPIAtForkChild() { g_module_registry_mutex.unlock(); }
+
 bool InitializeNativeAPI(const lsplant::HookHandler &handler) {
     std::lock_guard<std::mutex> lock(g_native_api_init_mutex);
     if (g_native_api_initialized) return true;
@@ -157,7 +161,7 @@ void RegisterNativeLib(const std::string &library_name) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(g_module_registry_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_module_registry_mutex);
     // The list is walked on every dlopen in the process and never shrinks - there is no
     // unregistration, and hot reload records a module's names again for each new generation - so
     // without this it grows without bound and every dlopen pays for the duplicates.
@@ -188,7 +192,7 @@ inline static auto do_dlopen_hook =
 
     if (handle == nullptr) return nullptr;
 
-    std::lock_guard<std::mutex> lock(g_module_registry_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_module_registry_mutex);
 
     for (std::string_view module_lib : g_module_native_libs) {
         if (HasEnding(lib_name, module_lib)) {
