@@ -694,6 +694,14 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
     g_registered = true;
     LOGI("AevixHyperRuntime: registered; applications spawned here will be specialized.");
 
+    // Register the at-fork handlers before installing the loader hook. The prepare handler takes
+    // the registry lock, so no other spawner thread can leave it owned by a vanished thread.
+    if (pthread_atfork(PrepareFork, ParentAfterFork, ChildAfterFork) != 0) {
+        LOGW("AevixHyperRuntime: cannot register fork synchronization; disabling this runtime.");
+        g_registered = false;
+        return;
+    }
+
     // Installed here, in the spawner, and inherited by every process it forks. Here rather than in
     // the child is the point: this runs before main, on one thread, with nothing else in the
     // process to race against and no other thread's lock for the fork to have caught mid-hook.
@@ -752,11 +760,7 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
         // The table is fetched now so that the first fork has something to hand down, and again on
         // the parent side of every later fork. The hook is registered here rather than in the child
         // for the same reason the loader hook is: this runs before main, on one thread.
-        if (pthread_atfork(PrepareFork, ParentAfterFork, ChildAfterFork) != 0) {
-        LOGW("AevixHyperRuntime: cannot register fork synchronization; disabling loader "
-             "interception and using direct native_init calls.");
-        g_native_api_ready = false;
-    }
+    
         RefreshIndex();
     }
 }
