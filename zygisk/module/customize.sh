@@ -133,6 +133,9 @@ for file in module.prop action.sh service.sh uninstall.sh sepolicy.rule cli daem
     extract "$ZIPFILE" "$file" "$MODPATH"
 done
 
+# Optional Zygisk Next entry for the HyperOS Rust Runtime.
+extract "$ZIPFILE" "zn_modules.arm64-v8a.txt" "$MODPATH"
+
 ui_print "- Extracting compressed payloads"
 extract_xz "framework/aevix.dex" "$MODPATH"
 extract_xz "daemon.apk" "$MODPATH"
