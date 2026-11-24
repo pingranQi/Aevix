@@ -135,6 +135,7 @@ done
 
 # Optional Zygisk Next entry for the HyperOS Rust Runtime.
 extract "$ZIPFILE" "zn_modules.arm64-v8a.txt" "$MODPATH"
+mv "$MODPATH/zn_modules.arm64-v8a.txt" "$MODPATH/zn_modules.txt"
 
 ui_print "- Extracting compressed payloads"
 extract_xz "framework/aevix.dex" "$MODPATH"
