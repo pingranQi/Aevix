@@ -595,7 +595,7 @@ object ConfigCache {
           else { Log.w(TAG, "Missing HyperOS native library $name for ${module.packageName}"); null }
         }
       }
-      if (libraries.isNotEmpty()) index[scope.processName] = libraries
+      if (libraries.isNotEmpty()) index["${scope.processName}#${scope.uid}"] = libraries
     }
     FileSystem.pruneHyosNativeLibraries(misc, staged.filterValues { it != null }.keys)
     FileSystem.publishHyosIndex(index)

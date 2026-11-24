@@ -102,6 +102,20 @@ inline constexpr int kInlineHookBackendDobby = 0;
 inline constexpr int kInlineHookBackendShadowHook = 1;
 
 inline std::atomic<int> g_inline_hook_backend{kInlineHookBackendDobby};
+inline std::atomic<HookFunType> g_external_inline_hook{nullptr};
+inline std::atomic<UnhookFunType> g_external_inline_unhook{nullptr};
+
+// The runtime owns its inline-hook engine in HyperOS-spawned processes. Install both callbacks
+// together so a hook can never be created by one backend and removed by another.
+inline void SetExternalInlineHookBackend(HookFunType hook, UnhookFunType unhook) {
+    if (hook == nullptr || unhook == nullptr) {
+        g_external_inline_hook.store(nullptr, std::memory_order_release);
+        g_external_inline_unhook.store(nullptr, std::memory_order_release);
+        return;
+    }
+    g_external_inline_hook.store(hook, std::memory_order_release);
+    g_external_inline_unhook.store(unhook, std::memory_order_release);
+}
 
 inline void SetInlineHookBackend(int backend) {
 #if defined(__aarch64__) || defined(__arm__)
@@ -155,11 +169,20 @@ using NativeInit = NativeOnModuleLoaded (*)(const NativeAPIEntries *entries);
 /** Installs the hooks required for the native API to function. */
 bool InstallNativeAPI(const lsplant::HookHandler &handler);
 
+/** Initializes the shared Native API table and installs the loader hook with the supplied backend. */
+bool InitializeNativeAPI(const lsplant::HookHandler &handler);
+
+/** Returns the immutable Native API table, or null before it has been initialized. */
+const NativeAPIEntries *GetNativeAPIEntries();
+
 /** Registers a native library by its filename for module initialization. */
 void RegisterNativeLib(const std::string &library_name);
 
 /** A wrapper around the configured inline hook backend. */
 inline int HookInline(void *original, void *replace, void **backup) {
+    if (auto hook = g_external_inline_hook.load(std::memory_order_acquire)) {
+        return hook(original, replace, backup);
+    }
 #if defined(__aarch64__) || defined(__arm__)
     if (g_inline_hook_backend.load(std::memory_order_relaxed) == kInlineHookBackendShadowHook) {
         if (ShadowHookInit()) {
@@ -200,6 +223,9 @@ inline int HookInline(void *original, void *replace, void **backup) {
 
 /** A wrapper around the configured inline hook backend. */
 inline int UnhookInline(void *original) {
+    if (auto unhook = g_external_inline_unhook.load(std::memory_order_acquire)) {
+        return unhook(original);
+    }
 #if defined(__aarch64__) || defined(__arm__)
     const uintptr_t target = reinterpret_cast<uintptr_t>(original);
     const auto result = g_inline_hook_registry.UnhookLast(

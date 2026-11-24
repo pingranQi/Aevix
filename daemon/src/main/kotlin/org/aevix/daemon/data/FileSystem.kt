@@ -18,10 +18,12 @@ import hidden.HiddenApiBridge
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermissions
 import java.time.Instant
@@ -52,7 +54,7 @@ private const val HYOS_ACTIVE_PROPERTY = "rust.runtime_active"
 private const val HYOS_VERSION_PROPERTY = "rust.runtime_version"
 private const val HYOS_INDEX_DIR = "hyos"
 private const val HYOS_GENERATION_NAME = ".generation"
-private const val HYOS_INDEX_MAGIC = "aevix-hyos 1"
+private const val HYOS_INDEX_MAGIC = "aevix-hyos 2"
 private const val HYOS_LIBRARY_DIR = "libhyos"
 
 data class HyosModuleLibrary(val modulePackage: String, val libraryName: String, val libraryPath: String)
@@ -655,31 +657,106 @@ object FileSystem {
         .onFailure { Log.e(TAG, "Failed to prune staged native libraries", it) }
   }
 
-  fun hasHyosRuntime(): Boolean = SystemProperties.getBoolean(HYOS_ACTIVE_PROPERTY, false) && SystemProperties.get(HYOS_VERSION_PROPERTY).orEmpty().isNotEmpty()
-  fun stageHyosNativeLibraries(root: Path, packageName: String, apkPath: String): String? = stageNativeLibraries(root, packageName, apkPath, HYOS_LIBRARY_DIR)
-  fun pruneHyosNativeLibraries(root: Path?, keep: Set<String>) { pruneStagedNativeLibraries(root, keep, HYOS_LIBRARY_DIR) }
+  fun hasHyosRuntime(): Boolean =
+      SystemProperties.getBoolean(HYOS_ACTIVE_PROPERTY, false) &&
+          SystemProperties.get(HYOS_VERSION_PROPERTY).orEmpty().isNotEmpty()
+
+  fun stageHyosNativeLibraries(root: Path, packageName: String, apkPath: String): String? =
+      stageNativeLibraries(root, packageName, apkPath, HYOS_LIBRARY_DIR)
+
+  fun pruneHyosNativeLibraries(root: Path?, keep: Set<String>) =
+      pruneStagedNativeLibraries(root, keep, HYOS_LIBRARY_DIR)
+
+  private fun isSafeHyosField(value: String): Boolean =
+      value.isNotEmpty() && value.none { it == '\t' || it == '\n' || it == '\r' || it == '\u0000' }
+
+  /** The '#' delimiter is reserved between the Android process name and its Linux UID. */
+  private fun isSafeHyosScopeKey(value: String): Boolean {
+    val separator = value.lastIndexOf('#')
+    if (separator <= 0 || separator == value.lastIndex) return false
+    val processName = value.substring(0, separator)
+    val uid = value.substring(separator + 1).toIntOrNull() ?: return false
+    if (uid < 0 || processName.length > 255) return false
+    return processName.all { it.code in 0x21..0x7e && it != '/' && it != '\\' && it != '#' }
+  }
+
+  /** Write and fsync a sibling temp file, then atomically replace the published file. */
+  private fun atomicWriteHyosFile(target: Path, content: String) {
+    val temp = Files.createTempFile(target.parent, ".\${target.fileName}.", ".tmp")
+    try {
+      FileChannel.open(temp, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING).use { channel ->
+        val buffer = ByteBuffer.wrap(content.toByteArray(Charsets.UTF_8))
+        while (buffer.hasRemaining()) channel.write(buffer)
+        channel.force(true)
+      }
+      Os.chmod(temp.toString(), "600".toInt(8))
+      Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+      Files.deleteIfExists(temp)
+    }
+  }
+
+  @Synchronized
   fun publishHyosIndex(index: Map<String, List<HyosModuleLibrary>>) {
     runCatching {
       val dir = basePath.resolve(HYOS_INDEX_DIR)
       Files.createDirectories(dir)
       Os.chmod(dir.toString(), "700".toInt(8))
+
       val written = mutableSetOf<String>()
-      index.forEach { (name, libraries) ->
-        if (name.isBlank() || name.contains('/') || name == "." || name == "..") return@forEach
-        val target = dir.resolve(name)
-        target.toFile().writeText(buildString {
+      index.forEach { (scopeKey, libraries) ->
+        if (!isSafeHyosScopeKey(scopeKey)) {
+          Log.w(TAG, "Skipping invalid HyperOS scope key")
+          return@forEach
+        }
+
+        val records = libraries.filter { library ->
+          val path = runCatching { Paths.get(library.libraryPath).toAbsolutePath().normalize() }.getOrNull()
+          val safe = isSafeHyosField(library.modulePackage) &&
+              '/' !in library.modulePackage && '\\' !in library.modulePackage &&
+              isSafeHyosField(library.libraryName) &&
+              library.libraryName.endsWith(".so") &&
+              '/' !in library.libraryName && '\\' !in library.libraryName &&
+              isSafeHyosField(library.libraryPath) &&
+              path != null && path.isAbsolute &&
+              path.fileName.toString() == library.libraryName &&
+              path.parent?.fileName?.toString() == library.modulePackage &&
+              path.parent?.parent?.fileName?.toString() == HYOS_LIBRARY_DIR &&
+              Files.isRegularFile(path) && Files.isReadable(path)
+          if (!safe) Log.w(TAG, "Skipping invalid HyperOS native library record for $scopeKey")
+          safe
+        }
+        if (records.isEmpty()) return@forEach
+
+        val target = dir.resolve(scopeKey)
+        val content = buildString {
           appendLine(HYOS_INDEX_MAGIC)
-          libraries.forEach { append(it.modulePackage); append('\t'); append(it.libraryName); append('\t'); append(it.libraryPath); append('\n') }
-        })
-        Os.chmod(target.toString(), "600".toInt(8))
-        written.add(name)
+          records.forEach {
+            append(it.modulePackage); append('\t')
+            append(it.libraryName); append('\t')
+            append(it.libraryPath); append('\n')
+          }
+        }
+        atomicWriteHyosFile(target, content)
+        written.add(scopeKey)
       }
+
+      // Publish data files first. Update the generation only after all replacements and stale-file
+      // removals complete, so a reader never fetches a partially published table.
       val stale = mutableListOf<Path>()
-      Files.list(dir).use { stream -> stream.forEach { if (it.fileName.toString() != HYOS_GENERATION_NAME && it.fileName.toString() !in written) stale.add(it) } }
-      stale.forEach { it.toFile().delete() }
+      Files.list(dir).use { stream ->
+        stream.forEach {
+          if (it.fileName.toString() != HYOS_GENERATION_NAME && it.fileName.toString() !in written) {
+            stale.add(it)
+          }
+        }
+      }
+      stale.forEach { Files.deleteIfExists(it) }
+
       val generation = dir.resolve(HYOS_GENERATION_NAME)
-      generation.toFile().writeText(System.currentTimeMillis().toString())
-      Os.chmod(generation.toString(), "600".toInt(8))
+      val previous = runCatching { generation.toFile().readText().trim().toLong() }.getOrDefault(0L)
+      val next = maxOf(System.currentTimeMillis(), previous + 1L)
+      atomicWriteHyosFile(generation, next.toString())
     }.onFailure { Log.e(TAG, "Failed to publish HyperOS index", it) }
   }
 

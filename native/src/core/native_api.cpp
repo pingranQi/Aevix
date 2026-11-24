@@ -84,6 +84,8 @@ namespace vector::native {
 namespace {
 // Mutex to protect access to the global module lists.
 std::mutex g_module_registry_mutex;
+std::mutex g_native_api_init_mutex;
+bool g_native_api_initialized = false;
 // List of callback functions provided by loaded native modules.
 std::list<NativeOnModuleLoaded> g_module_loaded_callbacks;
 // List of native library filenames that are registered as modules.
@@ -105,6 +107,7 @@ const NativeAPIEntries *g_native_api_entries = nullptr;
  * @brief Initializes the Native API entries struct and makes it read-only.
  */
 void InitializeApiEntries() {
+    if (g_native_api_entries != nullptr) return;
     if (g_api_page.get() == MAP_FAILED) {
         LOGF("Failed to allocate memory for native API entries.");
         LOGD("Release the memory page pointer %p", g_api_page.release());
@@ -122,10 +125,22 @@ void InitializeApiEntries() {
     LOGI("Native API entries initialized and protected.");
 }
 
+const NativeAPIEntries *GetNativeAPIEntries() { return g_native_api_entries; }
+
+bool InitializeNativeAPI(const lsplant::HookHandler &handler) {
+    std::lock_guard<std::mutex> lock(g_native_api_init_mutex);
+    if (g_native_api_initialized) return true;
+    if (g_native_api_entries == nullptr) InitializeApiEntries();
+    if (g_native_api_entries == nullptr) return false;
+    if (!InstallNativeAPI(handler)) return false;
+    g_native_api_initialized = true;
+    LOGI("Native API loader interception initialized.");
+    return true;
+}
+
 void RegisterNativeLib(const std::string &library_name) {
     static bool is_initialized = []() {
-        InitializeApiEntries();
-        return InstallNativeAPI(lsplant::InitInfo{
+        return InitializeNativeAPI(lsplant::InitInfo{
             .inline_hooker =
                 [](void *target, void *replacement) {
                     void *backup = nullptr;

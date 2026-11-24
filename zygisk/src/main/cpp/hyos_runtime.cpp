@@ -22,6 +22,7 @@
 
 #include "common/logging.h"
 #include "core/native_api.h"
+#include "elf/symbol_cache.h"
 
 #include "zygisk_next_api.h"
 
@@ -79,7 +80,7 @@ namespace {
  */
 constexpr auto kIndexDir = "/data/adb/lspd/hyos";
 constexpr std::string_view kGenerationName = ".generation";
-constexpr std::string_view kIndexMagic = "aevix-hyos 1";
+constexpr std::string_view kIndexMagic = "aevix-hyos 2";
 
 /// The two things the companion can be asked for.
 constexpr char kRequestGeneration = 'G';
@@ -153,6 +154,7 @@ bool g_index_loaded = false;
 // a runtime is free to call the callback again, and loading a module's libraries twice would run
 // its native_init twice.
 bool g_specialized = false;
+bool g_native_api_ready = false;
 
 // --- Small I/O helpers -------------------------------------------------------------------------
 
@@ -216,17 +218,49 @@ bool TakeU32(const std::string &in, size_t &pos, uint32_t &value) {
     return true;
 }
 
-/// Splits one index line into its three tab-separated fields.
+/// Splits one index line into its three tab-separated fields and rejects delimiter injection.
 bool ParseIndexLine(const std::string &line, LibraryEntry &out) {
     const auto first = line.find('\t');
     if (first == std::string::npos) return false;
     const auto second = line.find('\t', first + 1);
-    if (second == std::string::npos) return false;
+    if (second == std::string::npos || line.find('\t', second + 1) != std::string::npos) return false;
 
     out.module_package = line.substr(0, first);
     out.library_name = line.substr(first + 1, second - first - 1);
     out.library_path = line.substr(second + 1);
-    return !out.library_name.empty() && !out.library_path.empty();
+    if (out.module_package.empty() || out.library_name.empty() || out.library_path.empty()) return false;
+    if (out.library_name.find('/') != std::string::npos ||
+        out.library_name.find('\\') != std::string::npos ||
+        out.library_name.size() < 4 ||
+        out.library_name.compare(out.library_name.size() - 3, 3, ".so") != 0 ||
+        out.library_path.front() != '/') return false;
+    for (unsigned char ch : out.module_package + out.library_name + out.library_path) {
+        if (ch < 0x20 || ch == 0x7f) return false;
+    }
+    const auto slash = out.library_path.find_last_of('/');
+    return out.library_path.substr(slash + 1) == out.library_name;
+}
+
+std::string MakeScopeKey(std::string_view process_name, uid_t uid) {
+    return std::string(process_name) + "#" + std::to_string(uid);
+}
+
+bool ParseScopeFilename(const std::string &filename, std::string &process_name, uid_t &uid) {
+    const auto separator = filename.rfind('#');
+    if (separator == std::string::npos || separator == 0 || separator + 1 >= filename.size()) return false;
+    process_name = filename.substr(0, separator);
+    if (process_name.size() > 255) return false;
+    for (unsigned char ch : process_name) {
+        if (ch < 0x21 || ch > 0x7e || ch == '/' || ch == '\\' || ch == '#') return false;
+    }
+    const std::string uid_text = filename.substr(separator + 1);
+    char *end = nullptr;
+    errno = 0;
+    const unsigned long parsed = strtoul(uid_text.c_str(), &end, 10);
+    if (errno != 0 || end == uid_text.c_str() || *end != '\0' ||
+        parsed > static_cast<unsigned long>(static_cast<uid_t>(-1))) return false;
+    uid = static_cast<uid_t>(parsed);
+    return true;
 }
 
 /// Turns one published index into the libraries it names. The first line is the format's marker.
@@ -372,21 +406,28 @@ void RefreshIndex() {
     for (uint32_t i = 0; i < count; i++) {
         uint32_t key_length = 0;
         if (!TakeU32(payload, pos, key_length) || pos + key_length > payload.size()) return;
-        std::string key = payload.substr(pos, key_length);
+        std::string filename = payload.substr(pos, key_length);
         pos += key_length;
+        std::string process_name;
+        uid_t scope_uid = 0;
+        if (!ParseScopeFilename(filename, process_name, scope_uid)) return;
 
         uint32_t content_length = 0;
         if (!TakeU32(payload, pos, content_length) || pos + content_length > payload.size()) {
             return;
         }
-        parsed[key] = ParseIndex(payload.substr(pos, content_length));
+        parsed[MakeScopeKey(process_name, scope_uid)] = ParseIndex(payload.substr(pos, content_length));
         pos += content_length;
+    }
+    if (pos != payload.size()) {
+        LOGW("AevixHyperRuntime: the companion table has trailing bytes; ignoring it.");
+        return;
     }
 
     g_index = std::move(parsed);
     g_generation = generation;
     g_index_loaded = true;
-    LOGI("AevixHyperRuntime: holding scopes for {} process name(s).", g_index.size());
+    LOGI("AevixHyperRuntime: holding {} process/UID scope(s).", g_index.size());
 }
 
 /// Runs in the parent, before the fork that creates the next application process.
@@ -395,25 +436,20 @@ void PrepareIndex() {
 }
 
 void LoadModuleLibraries(const std::vector<LibraryEntry> &entries) {
-    // The interception of the loader was installed by the spawner before it forked, so it is
-    // already in place here and inherited. InstallNativeAPI is idempotent and reports that state.
-    const bool intercepts_dlopen = InstallNativeAPI();
-    if (!intercepts_dlopen) {
-        LOGW("AevixHyperRuntime: the loader is not intercepted. Module libraries will still be "
-             "loaded, but nothing will observe the loads that follow.");
-    }
-
+    // The loader hook is installed in hyos_spawner before it forks. That process is still
+    // single-threaded here, so its mutex and hook state are safe to inherit into app children.
     const NativeAPIEntries *api_entries = GetNativeAPIEntries();
     if (api_entries == nullptr) {
         LOGE("AevixHyperRuntime: the native API entries could not be built; not loading modules.");
         return;
     }
+    if (!g_native_api_ready) {
+        LOGW("AevixHyperRuntime: loader interception is unavailable; native_init will be called "
+             "directly for each scoped library.");
+    }
 
     for (const auto &entry : entries) {
-        // Registering first is what lets the loader hook recognize this very dlopen and call
-        // native_init itself. When the hook is not there it is called by hand below, so a module is
-        // initialized either way.
-        if (intercepts_dlopen) RegisterNativeLib(entry.library_name);
+        if (g_native_api_ready) RegisterNativeLib(entry.library_name);
 
         void *handle = dlopen(entry.library_path.c_str(), RTLD_NOW);
         if (handle == nullptr) {
@@ -424,7 +460,7 @@ void LoadModuleLibraries(const std::vector<LibraryEntry> &entries) {
         LOGI("AevixHyperRuntime: loaded {} for '{}'.", entry.library_path.c_str(),
              entry.module_package.c_str());
 
-        if (intercepts_dlopen) continue;
+        if (g_native_api_ready) continue;
         void *init_sym = dlsym(handle, "native_init");
         if (init_sym == nullptr) {
             LOGW("AevixHyperRuntime: {} does not export native_init.", entry.library_path.c_str());
@@ -447,16 +483,18 @@ void LoadModuleLibraries(const std::vector<LibraryEntry> &entries) {
  * the child, and the launch would hang on it with nothing to report.
  */
 void OnAppSpecialized(const ZnHyosAppSpecializeArgs *args) {
-    if (!g_registered) return;
-    if (g_specialized) return;
-    g_specialized = true;
-    if (args == nullptr || args->package_name == nullptr) {
-        LOGE("AevixHyperRuntime: specialization arrived without a package name.");
+    if (!g_registered || g_specialized) return;
+    if (args == nullptr || args->package_name == nullptr || args->process_name == nullptr) {
+        LOGE("AevixHyperRuntime: specialization arrived without a process or package name.");
         return;
     }
+    // UID is applied before this callback (per the Zygisk Next Runtime API contract), and is
+    // required to distinguish identical package/process names in different Android users.
+    const uid_t uid = getuid();
+    g_specialized = true;
 
-    LOGI("AevixHyperRuntime: specializing process '{}' (package '{}').", args->process_name,
-         args->package_name);
+    LOGI("AevixHyperRuntime: specializing process '{}' (package '{}', uid {}).", args->process_name,
+         args->package_name, static_cast<unsigned int>(uid));
 
     // The process name first, because that is what a scope is keyed by and what this process
     // actually is: a package with more than one process has a different scope in each. The package
@@ -464,13 +502,11 @@ void OnAppSpecialized(const ZnHyosAppSpecializeArgs *args) {
     // one truncated to the kernel's fifteen characters -- and it always resolves to the main
     // process, which is the more useful of the two wrong answers.
     const std::vector<LibraryEntry> *entries = nullptr;
-    if (args->process_name != nullptr) {
-        const auto found = g_index.find(args->process_name);
-        if (found != g_index.end()) entries = &found->second;
-    }
+    const auto process_scope = g_index.find(MakeScopeKey(args->process_name, uid));
+    if (process_scope != g_index.end()) entries = &process_scope->second;
     if (entries == nullptr) {
-        const auto found = g_index.find(args->package_name);
-        if (found != g_index.end()) entries = &found->second;
+        const auto package_scope = g_index.find(MakeScopeKey(args->package_name, uid));
+        if (package_scope != g_index.end()) entries = &package_scope->second;
     }
     if (entries == nullptr || entries->empty()) {
         LOGD("AevixHyperRuntime: '{}' is in no module's scope.", args->package_name);
@@ -604,14 +640,15 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
         return;
     }
 
-    // Take the runtime's own hook engine before the native API is handed to any module: this is the
-    // process the hooks will be installed in, and the runtime is the one that knows what it has
-    // already patched. Failing here is not fatal -- the API keeps Dobby -- but it is worth saying,
-    // because two engines on one address is exactly what the handover avoids.
+    // Use Zygisk Next's own hook engine before installing the loader hook and before handing the
+    // Native API table to modules. Both callbacks have the exact HookFunType ABI used by Aevix.
     if (api->inlineHook == nullptr || api->inlineUnhook == nullptr) {
-        LOGW("AevixHyperRuntime: the runtime offers no inline hooks; falling back to Dobby.");
+        SetExternalInlineHookBackend(nullptr, nullptr);
+        LOGW("AevixHyperRuntime: the runtime offers no complete inline-hook pair; using Aevix's "
+             "configured backend.");
     } else {
-        SetHookBackend(api->inlineHook, api->inlineUnhook);
+        SetExternalInlineHookBackend(api->inlineHook, api->inlineUnhook);
+        LOGI("AevixHyperRuntime: using Zygisk Next inline-hook backend.");
     }
 
     static const ZygiskNextHyosModule hyos_module = {
@@ -631,9 +668,21 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
     // process to race against and no other thread's lock for the fork to have caught mid-hook.
     // Only worth doing now that a callback is coming -- without one, nothing would ever load a
     // module library, and patching a system process's loader for that is a change with no purpose.
-    if (!InstallNativeAPI()) {
-        LOGW("AevixHyperRuntime: the loader cannot be intercepted; module libraries will still be "
-             "loaded on specialization, but later loads will be invisible to them.");
+    // Install the dlopen interception in the spawner before main() and before any fork. The
+    // loader hook and its registry mutex are therefore inherited in an unlocked, single-threaded
+    // state by every specialized application process.
+    g_native_api_ready = InitializeNativeAPI(lsplant::InitInfo{
+        .inline_hooker =
+            [](void *target, void *replacement) {
+                void *backup = nullptr;
+                return HookInline(target, replacement, &backup) == 0 ? backup : nullptr;
+            },
+        .art_symbol_resolver =
+            [](auto symbol) { return ElfSymbolCache::GetLinker()->getSymbAddress(symbol); },
+    });
+    if (!g_native_api_ready) {
+        LOGW("AevixHyperRuntime: native loader interception failed; scoped libraries will use "
+             "direct native_init invocation.");
     }
 
     // One connection, made now and kept for the life of the process. The spawner is its only
