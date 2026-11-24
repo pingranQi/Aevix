@@ -682,7 +682,7 @@ object FileSystem {
 
   /** Write and fsync a sibling temp file, then atomically replace the published file. */
   private fun atomicWriteHyosFile(target: Path, content: String) {
-    val temp = Files.createTempFile(target.parent, ".\${target.fileName}.", ".tmp")
+    val temp = Files.createTempFile(target.parent, ".${target.fileName}.", ".tmp")
     try {
       FileChannel.open(temp, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING).use { channel ->
         val buffer = ByteBuffer.wrap(content.toByteArray(Charsets.UTF_8))

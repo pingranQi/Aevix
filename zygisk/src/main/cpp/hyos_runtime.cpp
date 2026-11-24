@@ -254,6 +254,9 @@ bool ParseScopeFilename(const std::string &filename, std::string &process_name, 
         if (ch < 0x21 || ch > 0x7e || ch == '/' || ch == '\\' || ch == '#') return false;
     }
     const std::string uid_text = filename.substr(separator + 1);
+    for (unsigned char ch : uid_text) {
+        if (ch < '0' || ch > '9') return false;
+    }
     char *end = nullptr;
     errno = 0;
     const unsigned long parsed = strtoul(uid_text.c_str(), &end, 10);
@@ -401,11 +404,15 @@ void RefreshIndex() {
 
     size_t pos = 0;
     uint32_t count = 0;
-    if (!TakeU32(payload, pos, count)) return;
+    if (!TakeU32(payload, pos, count) || count > 65536) {
+        LOGW("AevixHyperRuntime: the companion table has an invalid record count.");
+        return;
+    }
     std::map<std::string, std::vector<LibraryEntry>> parsed;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t key_length = 0;
-        if (!TakeU32(payload, pos, key_length) || pos + key_length > payload.size()) return;
+        if (!TakeU32(payload, pos, key_length) || key_length == 0 || key_length > 256 ||
+            key_length > payload.size() - pos) return;
         std::string filename = payload.substr(pos, key_length);
         pos += key_length;
         std::string process_name;
@@ -413,7 +420,8 @@ void RefreshIndex() {
         if (!ParseScopeFilename(filename, process_name, scope_uid)) return;
 
         uint32_t content_length = 0;
-        if (!TakeU32(payload, pos, content_length) || pos + content_length > payload.size()) {
+        if (!TakeU32(payload, pos, content_length) || content_length > (1u << 20) ||
+            content_length > payload.size() - pos) {
             return;
         }
         parsed[MakeScopeKey(process_name, scope_uid)] = ParseIndex(payload.substr(pos, content_length));
