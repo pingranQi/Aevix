@@ -386,8 +386,8 @@ void RefreshIndex() {
     if (write(g_companion_fd, &request, 1) != 1) return;
     uint64_t generation = 0;
     if (!ReadAll(g_companion_fd, &generation, sizeof(generation))) return;
-    if (generation == 0) {
-        LOGD("AevixHyperRuntime: the daemon has published nothing yet.");
+    if (generation == 0 || (generation & 1u) != 0) {
+        LOGD("AevixHyperRuntime: the daemon has not finished publishing an index.");
         return;
     }
     if (g_index_loaded && generation == g_generation) return;
@@ -401,6 +401,14 @@ void RefreshIndex() {
     }
     std::string payload(length, '\0');
     if (!ReadAll(g_companion_fd, payload.data(), length)) return;
+
+    // The daemon uses an odd/even generation seqlock around its multi-file publication. Refuse
+    // the table if a writer overlapped this read, rather than accepting mixed old/new scopes.
+    const uint64_t confirmed_generation = ReadGeneration();
+    if (confirmed_generation != generation || (confirmed_generation & 1u) != 0) {
+        LOGD("AevixHyperRuntime: the index changed while its table was being read; retry next fork.");
+        return;
+    }
 
     size_t pos = 0;
     uint32_t count = 0;

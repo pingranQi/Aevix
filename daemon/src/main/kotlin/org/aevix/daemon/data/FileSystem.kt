@@ -703,6 +703,13 @@ object FileSystem {
       Files.createDirectories(dir)
       Os.chmod(dir.toString(), "700".toInt(8))
 
+      val generation = dir.resolve(HYOS_GENERATION_NAME)
+      val previous = runCatching { generation.toFile().readText().trim().toLong() }.getOrDefault(0L)
+      // Odd means publication is in progress. Readers accept only an unchanged even generation,
+      // making the individually-atomic files behave as one consistent snapshot.
+      val writingGeneration = if (previous % 2L == 0L) previous + 1L else previous + 2L
+      atomicWriteHyosFile(generation, writingGeneration.toString())
+
       val written = mutableSetOf<String>()
       index.forEach { (scopeKey, libraries) ->
         if (!isSafeHyosScopeKey(scopeKey)) {
@@ -741,8 +748,7 @@ object FileSystem {
         written.add(scopeKey)
       }
 
-      // Publish data files first. Update the generation only after all replacements and stale-file
-      // removals complete, so a reader never fetches a partially published table.
+      // Finish the seqlock only after all data replacements and stale-file removals complete.
       val stale = mutableListOf<Path>()
       Files.list(dir).use { stream ->
         stream.forEach {
@@ -753,10 +759,7 @@ object FileSystem {
       }
       stale.forEach { Files.deleteIfExists(it) }
 
-      val generation = dir.resolve(HYOS_GENERATION_NAME)
-      val previous = runCatching { generation.toFile().readText().trim().toLong() }.getOrDefault(0L)
-      val next = maxOf(System.currentTimeMillis(), previous + 1L)
-      atomicWriteHyosFile(generation, next.toString())
+      atomicWriteHyosFile(generation, (writingGeneration + 1L).toString())
     }.onFailure { Log.e(TAG, "Failed to publish HyperOS index", it) }
   }
 
