@@ -587,10 +587,17 @@ object FileSystem {
    * Returns null when the module ships nothing for this ABI or the copy failed, in which case the
    * module still loads and only its native part fails, exactly as it does today.
    */
-  fun stageNativeLibraries(root: Path, packageName: String, apkPath: String, dirName: String = "lib"): String? =
+  fun stageNativeLibraries(
+      root: Path,
+      packageName: String,
+      apkPath: String,
+      dirName: String = "lib",
+      version: String? = null,
+  ): String? =
       runCatching {
             val apk = File(apkPath)
-            val dir = root.resolve(dirName).resolve(packageName)
+            val packageDir = root.resolve(dirName).resolve(packageName)
+            val dir = if (version == null) packageDir else packageDir.resolve(version)
 
             // Re-extract only when the APK behind the copy changed. Getting this wrong in the
             // lenient direction would leave system_server running a module's superseded native
@@ -661,11 +668,36 @@ object FileSystem {
       SystemProperties.getBoolean(HYOS_ACTIVE_PROPERTY, false) &&
           SystemProperties.get(HYOS_VERSION_PROPERTY).orEmpty().isNotEmpty()
 
-  fun stageHyosNativeLibraries(root: Path, packageName: String, apkPath: String): String? =
-      stageNativeLibraries(root, packageName, apkPath, HYOS_LIBRARY_DIR)
+  fun stageHyosNativeLibraries(root: Path, packageName: String, apkPath: String): String? {
+    val apk = File(apkPath)
+    val version = "${apk.length()}-${apk.lastModified()}-${BuildConfig.VERSION_CODE}"
+    return stageNativeLibraries(root, packageName, apkPath, HYOS_LIBRARY_DIR, version)
+  }
 
-  fun pruneHyosNativeLibraries(root: Path?, keep: Set<String>) =
-      pruneStagedNativeLibraries(root, keep, HYOS_LIBRARY_DIR)
+  /** Remove retired version directories only after the new index generation is committed. */
+  fun pruneHyosNativeLibraries(root: Path?, keepDirectories: Set<String>) {
+    if (root == null) return
+    runCatching {
+      val libraryRoot = root.resolve(HYOS_LIBRARY_DIR)
+      if (!libraryRoot.isDirectory()) return
+      val keep = keepDirectories.mapNotNull {
+        runCatching { Paths.get(it).toAbsolutePath().normalize() }.getOrNull()
+      }.toSet()
+      Files.list(libraryRoot).use { packages ->
+        packages.filter { it.isDirectory() }.forEach { packageDir ->
+          Files.list(packageDir).use { versions ->
+            versions.forEach { versionDir ->
+              if (versionDir.toAbsolutePath().normalize() !in keep) {
+                versionDir.toFile().deleteRecursively()
+              }
+            }
+          }
+          val empty = Files.list(packageDir).use { !it.findAny().isPresent }
+          if (empty) packageDir.toFile().delete()
+        }
+      }
+    }.onFailure { Log.e(TAG, "Failed to prune retired HyperOS native libraries", it) }
+  }
 
   private fun isSafeHyosField(value: String): Boolean =
       value.isNotEmpty() && value.none { it == '\t' || it == '\n' || it == '\r' || it == '\u0000' }
@@ -697,8 +729,8 @@ object FileSystem {
   }
 
   @Synchronized
-  fun publishHyosIndex(index: Map<String, List<HyosModuleLibrary>>) {
-    runCatching {
+  fun publishHyosIndex(index: Map<String, List<HyosModuleLibrary>>): Boolean {
+    return runCatching {
       val dir = basePath.resolve(HYOS_INDEX_DIR)
       Files.createDirectories(dir)
       Os.chmod(dir.toString(), "700".toInt(8))
@@ -727,8 +759,8 @@ object FileSystem {
               isSafeHyosField(library.libraryPath) &&
               path != null && path.isAbsolute &&
               path.fileName.toString() == library.libraryName &&
-              path.parent?.fileName?.toString() == library.modulePackage &&
-              path.parent?.parent?.fileName?.toString() == HYOS_LIBRARY_DIR &&
+              path.parent?.parent?.fileName?.toString() == library.modulePackage &&
+              path.parent?.parent?.parent?.fileName?.toString() == HYOS_LIBRARY_DIR &&
               Files.isRegularFile(path) && Files.isReadable(path)
           if (!safe) Log.w(TAG, "Skipping invalid HyperOS native library record for $scopeKey")
           safe
@@ -760,7 +792,8 @@ object FileSystem {
       stale.forEach { Files.deleteIfExists(it) }
 
       atomicWriteHyosFile(generation, (writingGeneration + 1L).toString())
-    }.onFailure { Log.e(TAG, "Failed to publish HyperOS index", it) }
+      true
+    }.onFailure { Log.e(TAG, "Failed to publish HyperOS index", it) }.getOrDefault(false)
   }
 
   fun toGlobalNamespace(path: String): File {

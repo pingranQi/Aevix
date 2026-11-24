@@ -597,8 +597,10 @@ object ConfigCache {
       }
       if (libraries.isNotEmpty()) index["${scope.processName}#${scope.uid}"] = libraries
     }
-    FileSystem.pruneHyosNativeLibraries(misc, staged.filterValues { it != null }.keys)
-    FileSystem.publishHyosIndex(index)
+    // Keep the previous versioned libraries until the index points at the new generation.
+    if (FileSystem.publishHyosIndex(index)) {
+      FileSystem.pruneHyosNativeLibraries(misc, staged.values.filterNotNull().toSet())
+    }
   }
 
   fun getModulesForProcess(processName: String, uid: Int): List<LoadedModule> {
