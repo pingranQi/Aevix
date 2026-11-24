@@ -255,6 +255,7 @@ androidComponents {
                 into(tempModuleDir)
                 from("${rootProject.projectDir}/README.md")
                 from("$projectDir/module") { exclude("module.prop", "action.sh", "daemon") }
+                from("$projectDir/module") { include("zn_modules.arm64-v8a.txt") }
                 from("$projectDir/module") {
                     include("module.prop")
                     expand(
