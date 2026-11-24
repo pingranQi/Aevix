@@ -693,6 +693,9 @@ object FileSystem {
         packages.filter { it.isDirectory() }.forEach { packageDir ->
           Files.list(packageDir).use { versions ->
             versions.forEach { versionDir ->
+              // Ignore legacy flat files from an earlier staging layout; an old spawner may
+              // still have their paths in its inherited index.
+              if (!versionDir.isDirectory()) return@forEach
               val retiredMarker = versionDir.resolve(".retired")
               if (versionDir.toAbsolutePath().normalize() in keep) {
                 Files.deleteIfExists(retiredMarker)
