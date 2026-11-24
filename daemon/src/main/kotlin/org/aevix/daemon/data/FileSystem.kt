@@ -640,6 +640,11 @@ object FileSystem {
               Os.chmod(dir.toString(), "711".toInt(8))
               setSelinuxContextRecursive(dir, "u:object_r:xposed_data:s0")
               SELinux.setFileContext(dir.parent.toString(), "u:object_r:xposed_data:s0")
+              if (version != null) {
+                // The versioned layout adds libhyos/package above the active version directory.
+                Os.chmod(dir.parent.parent.toString(), "711".toInt(8))
+                SELinux.setFileContext(dir.parent.parent.toString(), "u:object_r:xposed_data:s0")
+              }
               dir.toString()
             }
           }

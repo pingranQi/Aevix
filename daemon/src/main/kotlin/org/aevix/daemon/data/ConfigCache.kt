@@ -599,7 +599,10 @@ object ConfigCache {
     }
     // Keep the previous versioned libraries until the index points at the new generation.
     if (FileSystem.publishHyosIndex(index)) {
-      FileSystem.pruneHyosNativeLibraries(misc, staged.values.filterNotNull().toSet())
+      val activeDirectories = index.values.flatten().mapTo(mutableSetOf()) {
+        Paths.get(it.libraryPath).parent.toString()
+      }
+      FileSystem.pruneHyosNativeLibraries(misc, activeDirectories)
     }
   }
 
