@@ -56,6 +56,7 @@ private const val HYOS_INDEX_DIR = "hyos"
 private const val HYOS_GENERATION_NAME = ".generation"
 private const val HYOS_INDEX_MAGIC = "aevix-hyos 2"
 private const val HYOS_LIBRARY_DIR = "libhyos"
+private const val HYOS_LIBRARY_GRACE_MS = 10 * 60 * 1000L
 
 data class HyosModuleLibrary(val modulePackage: String, val libraryName: String, val libraryPath: String)
 
@@ -693,7 +694,13 @@ object FileSystem {
           Files.list(packageDir).use { versions ->
             versions.forEach { versionDir ->
               if (versionDir.toAbsolutePath().normalize() !in keep) {
-                versionDir.toFile().deleteRecursively()
+                // pthread_atfork may already have copied the previous index just before a
+                // generation swap. Retain retired files briefly so that child dlopen completes.
+                val modified = runCatching { Files.getLastModifiedTime(versionDir).toMillis() }
+                    .getOrDefault(System.currentTimeMillis())
+                if (System.currentTimeMillis() - modified > HYOS_LIBRARY_GRACE_MS) {
+                  versionDir.toFile().deleteRecursively()
+                }
               }
             }
           }
