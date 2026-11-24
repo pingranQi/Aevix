@@ -575,6 +575,7 @@ object ConfigCache {
   }
 
   /** Publish the same process scopes to the HyperOS Rust Runtime companion. */
+  @Synchronized
   private fun publishHyosRuntimeIndex(scopes: Map<ProcessScope, List<LoadedModule>>) {
     if (!FileSystem.hasHyosRuntime()) return
     setupMiscPath()

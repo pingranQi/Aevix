@@ -735,6 +735,19 @@ object FileSystem {
       }
       Os.chmod(temp.toString(), "600".toInt(8))
       Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+      // Best-effort directory fsync makes the rename durable across sudden power loss.
+      runCatching {
+        val directoryFd = Os.open(
+            target.parent.toString(),
+            OsConstants.O_RDONLY or OsConstants.O_DIRECTORY,
+            0,
+        )
+        try {
+          Os.fsync(directoryFd)
+        } finally {
+          Os.close(directoryFd)
+        }
+      }
     } finally {
       Files.deleteIfExists(temp)
     }
