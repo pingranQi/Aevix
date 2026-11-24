@@ -2,6 +2,8 @@
   global:
     Java_*;
     zygisk_module_entry;
+    zn_module;
+    zn_companion_module;
   local:
     *;
 };
