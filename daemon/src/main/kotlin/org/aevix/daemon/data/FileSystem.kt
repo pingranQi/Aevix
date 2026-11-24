@@ -9,6 +9,7 @@ import android.os.Process
 import android.os.RemoteException
 import android.os.SELinux
 import android.os.SharedMemory
+import android.os.SystemProperties
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -47,6 +48,14 @@ private const val TAG = "AevixFileSystem"
  * to read a `system_file`, which covers both.
  */
 private const val SYSTEM_FILE_CONTEXT = "u:object_r:system_file:s0"
+private const val HYOS_ACTIVE_PROPERTY = "rust.runtime_active"
+private const val HYOS_VERSION_PROPERTY = "rust.runtime_version"
+private const val HYOS_INDEX_DIR = "hyos"
+private const val HYOS_GENERATION_NAME = ".generation"
+private const val HYOS_INDEX_MAGIC = "aevix-hyos 1"
+private const val HYOS_LIBRARY_DIR = "libhyos"
+
+data class HyosModuleLibrary(val modulePackage: String, val libraryName: String, val libraryPath: String)
 
 /**
  * What came of trying to load a module APK.
@@ -576,10 +585,10 @@ object FileSystem {
    * Returns null when the module ships nothing for this ABI or the copy failed, in which case the
    * module still loads and only its native part fails, exactly as it does today.
    */
-  fun stageNativeLibraries(root: Path, packageName: String, apkPath: String): String? =
+  fun stageNativeLibraries(root: Path, packageName: String, apkPath: String, dirName: String = "lib"): String? =
       runCatching {
             val apk = File(apkPath)
-            val dir = root.resolve("lib").resolve(packageName)
+            val dir = root.resolve(dirName).resolve(packageName)
 
             // Re-extract only when the APK behind the copy changed. Getting this wrong in the
             // lenient direction would leave system_server running a module's superseded native
@@ -632,10 +641,10 @@ object FileSystem {
    * Drops staged libraries belonging to modules that are no longer bound for system_server, so an
    * uninstalled or rescoped module does not leave a copy of its native code behind for good.
    */
-  fun pruneStagedNativeLibraries(root: Path?, keep: Set<String>) {
+  fun pruneStagedNativeLibraries(root: Path?, keep: Set<String>, dirName: String = "lib") {
     if (root == null) return
     runCatching {
-          val libRoot = root.resolve("lib")
+          val libRoot = root.resolve(dirName)
           if (!libRoot.isDirectory()) return
           Files.list(libRoot).use { stream ->
             stream
@@ -644,6 +653,34 @@ object FileSystem {
           }
         }
         .onFailure { Log.e(TAG, "Failed to prune staged native libraries", it) }
+  }
+
+  fun hasHyosRuntime(): Boolean = SystemProperties.getBoolean(HYOS_ACTIVE_PROPERTY, false) && SystemProperties.get(HYOS_VERSION_PROPERTY).orEmpty().isNotEmpty()
+  fun stageHyosNativeLibraries(root: Path, packageName: String, apkPath: String): String? = stageNativeLibraries(root, packageName, apkPath, HYOS_LIBRARY_DIR)
+  fun pruneHyosNativeLibraries(root: Path?, keep: Set<String>) { pruneStagedNativeLibraries(root, keep, HYOS_LIBRARY_DIR) }
+  fun publishHyosIndex(index: Map<String, List<HyosModuleLibrary>>) {
+    runCatching {
+      val dir = basePath.resolve(HYOS_INDEX_DIR)
+      Files.createDirectories(dir)
+      Os.chmod(dir.toString(), "700".toInt(8))
+      val written = mutableSetOf<String>()
+      index.forEach { (name, libraries) ->
+        if (name.isBlank() || name.contains('/') || name == "." || name == "..") return@forEach
+        val target = dir.resolve(name)
+        target.toFile().writeText(buildString {
+          appendLine(HYOS_INDEX_MAGIC)
+          libraries.forEach { append(it.modulePackage); append('\t'); append(it.libraryName); append('\t'); append(it.libraryPath); append('\n') }
+        })
+        Os.chmod(target.toString(), "600".toInt(8))
+        written.add(name)
+      }
+      val stale = mutableListOf<Path>()
+      Files.list(dir).use { stream -> stream.forEach { if (it.fileName.toString() != HYOS_GENERATION_NAME && it.fileName.toString() !in written) stale.add(it) } }
+      stale.forEach { it.toFile().delete() }
+      val generation = dir.resolve(HYOS_GENERATION_NAME)
+      generation.toFile().writeText(System.currentTimeMillis().toString())
+      Os.chmod(generation.toString(), "600".toInt(8))
+    }.onFailure { Log.e(TAG, "Failed to publish HyperOS index", it) }
   }
 
   fun toGlobalNamespace(path: String): File {
