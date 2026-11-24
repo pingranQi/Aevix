@@ -404,7 +404,10 @@ void RefreshIndex() {
 
     // The daemon uses an odd/even generation seqlock around its multi-file publication. Refuse
     // the table if a writer overlapped this read, rather than accepting mixed old/new scopes.
-    const uint64_t confirmed_generation = ReadGeneration();
+    const char confirm = kRequestGeneration;
+    if (write(g_companion_fd, &confirm, 1) != 1) return;
+    uint64_t confirmed_generation = 0;
+    if (!ReadAll(g_companion_fd, &confirmed_generation, sizeof(confirmed_generation))) return;
     if (confirmed_generation != generation || (confirmed_generation & 1u) != 0) {
         LOGD("AevixHyperRuntime: the index changed while its table was being read; retry next fork.");
         return;
@@ -467,8 +470,8 @@ void ChildAfterFork() {
 }
 
 void LoadModuleLibraries(const std::vector<LibraryEntry> &entries) {
-    // The loader hook is installed in hyos_spawner before it forks. That process is still
-    // single-threaded here, so its mutex and hook state are safe to inherit into app children.
+    // The loader hook is installed in hyos_spawner before it forks. The at-fork handlers serialize
+    // its registry around each fork, so the child inherits an unlocked and consistent state.
     const NativeAPIEntries *api_entries = GetNativeAPIEntries();
     if (api_entries == nullptr) {
         LOGE("AevixHyperRuntime: the native API entries could not be built; not loading modules.");
@@ -702,14 +705,10 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
         return;
     }
 
-    // Installed here, in the spawner, and inherited by every process it forks. Here rather than in
-    // the child is the point: this runs before main, on one thread, with nothing else in the
-    // process to race against and no other thread's lock for the fork to have caught mid-hook.
-    // Only worth doing now that a callback is coming -- without one, nothing would ever load a
-    // module library, and patching a system process's loader for that is a change with no purpose.
-    // Install the dlopen interception in the spawner before main() and before any fork. The
-    // loader hook and its registry mutex are therefore inherited in an unlocked, single-threaded
-    // state by every specialized application process.
+    // Install the dlopen interception in the spawner before main() and before any fork. This keeps
+    // loader setup out of the specialized child; the at-fork handlers below serialize its registry
+    // and release the lock in both parent and child. Only worth doing now that a callback is coming
+    // -- without one, no module library would ever be loaded here.
     g_native_api_ready = InitializeNativeAPI(lsplant::InitInfo{
         .inline_hooker =
             [](void *target, void *replacement) {
@@ -757,9 +756,8 @@ void OnModuleLoaded(void *self_handle, const ZygiskNextAPI *api) {
                  strerror(errno));
         }
 
-        // The table is fetched now so that the first fork has something to hand down, and again on
-        // the parent side of every later fork. The hook is registered here rather than in the child
-        // for the same reason the loader hook is: this runs before main, on one thread.
+        // Fetch once before main so the first fork has a snapshot; PrepareFork refreshes it again
+        // on the parent side of every later fork.
     
         RefreshIndex();
     }
