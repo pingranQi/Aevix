@@ -693,12 +693,23 @@ object FileSystem {
         packages.filter { it.isDirectory() }.forEach { packageDir ->
           Files.list(packageDir).use { versions ->
             versions.forEach { versionDir ->
-              if (versionDir.toAbsolutePath().normalize() !in keep) {
-                // pthread_atfork may already have copied the previous index just before a
-                // generation swap. Retain retired files briefly so that child dlopen completes.
-                val modified = runCatching { Files.getLastModifiedTime(versionDir).toMillis() }
+              val retiredMarker = versionDir.resolve(".retired")
+              if (versionDir.toAbsolutePath().normalize() in keep) {
+                Files.deleteIfExists(retiredMarker)
+              } else if (!Files.exists(retiredMarker)) {
+                // Start the grace period when this generation first becomes unreferenced, not
+                // when it was staged; an old APK can remain active for months before an update.
+                Files.write(
+                    retiredMarker,
+                    System.currentTimeMillis().toString().toByteArray(Charsets.UTF_8),
+                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE,
+                )
+                Os.chmod(retiredMarker.toString(), "600".toInt(8))
+              } else {
+                val retiredAt = runCatching { retiredMarker.toFile().readText().trim().toLong() }
                     .getOrDefault(System.currentTimeMillis())
-                if (System.currentTimeMillis() - modified > HYOS_LIBRARY_GRACE_MS) {
+                if (System.currentTimeMillis() - retiredAt > HYOS_LIBRARY_GRACE_MS) {
                   versionDir.toFile().deleteRecursively()
                 }
               }
