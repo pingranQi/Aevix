@@ -539,6 +539,8 @@ object ConfigCache {
 
       Log.d(TAG, "Cache Update Complete. Map Swap successful.")
 
+      publishHyosRuntimeIndex(newScopes)
+
       // Targets are removed only after the module set has been published.
       (oldState.modules.keys - newModules.keys).forEach { packageName ->
         runCatching { FrameworkService.forgetHotReloadTargets(packageName) }
@@ -570,6 +572,33 @@ object ConfigCache {
       //   modules.forEach { mod -> Log.d(TAG, "\t${mod.packageName}") }
       // }
     }
+  }
+
+  /** Publish the same process scopes to the HyperOS Rust Runtime companion. */
+  private fun publishHyosRuntimeIndex(scopes: Map<ProcessScope, List<LoadedModule>>) {
+    if (!FileSystem.hasHyosRuntime()) return
+    setupMiscPath()
+    val misc = state.miscPath ?: return
+    val staged = scopes.values.asSequence().flatten()
+      .filter { !it.code?.moduleLibraryNames.isNullOrEmpty() }
+      .distinctBy { it.packageName }
+      .associate { module ->
+        module.packageName to FileSystem.stageHyosNativeLibraries(misc, module.packageName, module.apkPath)
+      }
+    val index = mutableMapOf<String, List<HyosModuleLibrary>>()
+    scopes.forEach { (scope, modules) ->
+      val libraries = modules.flatMap { module ->
+        val dir = staged[module.packageName] ?: return@flatMap emptyList()
+        module.code?.moduleLibraryNames.orEmpty().mapNotNull { name ->
+          val path = Paths.get(dir, name)
+          if (Files.isReadable(path)) HyosModuleLibrary(module.packageName, name, path.toString())
+          else { Log.w(TAG, "Missing HyperOS native library $name for ${module.packageName}"); null }
+        }
+      }
+      if (libraries.isNotEmpty()) index[scope.processName] = libraries
+    }
+    FileSystem.pruneHyosNativeLibraries(misc, staged.filterValues { it != null }.keys)
+    FileSystem.publishHyosIndex(index)
   }
 
   fun getModulesForProcess(processName: String, uid: Int): List<LoadedModule> {
