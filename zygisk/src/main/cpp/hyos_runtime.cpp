@@ -22,6 +22,7 @@
 
 #include "common/logging.h"
 #include "core/native_api.h"
+#include "elf/elf_image.h"
 #include "elf/symbol_cache.h"
 
 #include "zygisk_next_api.h"
