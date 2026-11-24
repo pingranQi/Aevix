@@ -249,7 +249,7 @@ bool ParseScopeFilename(const std::string &filename, std::string &process_name, 
     const auto separator = filename.rfind('#');
     if (separator == std::string::npos || separator == 0 || separator + 1 >= filename.size()) return false;
     process_name = filename.substr(0, separator);
-    if (process_name.size() > 255) return false;
+    if (process_name.size() > 244) return false;
     for (unsigned char ch : process_name) {
         if (ch < 0x21 || ch > 0x7e || ch == '/' || ch == '\\' || ch == '#') return false;
     }
@@ -419,7 +419,7 @@ void RefreshIndex() {
     std::map<std::string, std::vector<LibraryEntry>> parsed;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t key_length = 0;
-        if (!TakeU32(payload, pos, key_length) || key_length == 0 || key_length > 256 ||
+        if (!TakeU32(payload, pos, key_length) || key_length == 0 || key_length > 255 ||
             key_length > payload.size() - pos) return;
         std::string filename = payload.substr(pos, key_length);
         pos += key_length;

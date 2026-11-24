@@ -720,7 +720,7 @@ object FileSystem {
     if (separator <= 0 || separator == value.lastIndex) return false
     val processName = value.substring(0, separator)
     val uid = value.substring(separator + 1).toIntOrNull() ?: return false
-    if (uid < 0 || processName.length > 255) return false
+    if (uid < 0 || processName.length > 244) return false
     return processName.all { it.code in 0x21..0x7e && it != '/' && it != '\\' && it != '#' }
   }
 
