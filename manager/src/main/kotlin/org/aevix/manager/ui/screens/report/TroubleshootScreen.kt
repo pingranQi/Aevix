@@ -171,17 +171,6 @@ fun TroubleshootScreen(
 
             item {
                 Step(
-                    icon = Icons.AutoMirrored.Rounded.OpenInNew,
-                    title = stringResource(R.string.report_step_zygisk),
-                    body = stringResource(R.string.report_step_zygisk_body),
-                    titleAction = {
-                        OutlinedButton(onClick = { onOpenUrl(NEO_ZYGISK) }) { Text("NeoZygisk") }
-                    },
-                )
-            }
-
-            item {
-                Step(
                     icon = Icons.Rounded.Save,
                     title = stringResource(R.string.report_step_logs),
                     body = stringResource(R.string.report_step_logs_body),
