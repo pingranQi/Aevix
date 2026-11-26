@@ -236,8 +236,6 @@
     <string name="report_title">回報之前</string>
     <string name="report_step_canary">先試試最新的 Canary 版本</string>
     <string name="report_step_canary_body">問題可能已經修正，而且維護者需要 Debug 版本才能協助你。請使用 master 分支的建置——來自 Pull Request 的建置並不穩定。</string>
-    <string name="report_step_zygisk">沒有使用 Magisk？請更新 Zygisk</string>
-    <string name="report_step_zygisk_body">刷入最新的 Zygisk 實作，若有 Debug 版本請優先使用。</string>
     <string name="report_step_logs">附上日誌</string>
     <string name="report_step_logs_body">沒有日誌的回報只能從頭問起。此操作會把兩份日誌寫入一個可供附加的 zip 檔案。</string>
     <string name="report_step_crashed">如果 Zygisk 當掉了</string>
