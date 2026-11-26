@@ -167,7 +167,7 @@ class GitHubRepository(
                     fromCache = false,
                     offline = false,
                     totalCommits = total,
-                    upstreamRaw = fresh.upstreamCommits,
+                    upstreamRaw = emptyList(),
                     freshness = freshness,
                 )
             }
@@ -200,7 +200,7 @@ class GitHubRepository(
                 // this path did not make, and without it a cached read loses the commit numbering
                 // that the "you are here" marker is built on.
                 totalCommits = cached.totalCommits,
-                upstreamRaw = cached.upstreamCommits,
+                upstreamRaw = emptyList(),
             )
         }
 
@@ -351,7 +351,7 @@ class GitHubRepository(
 
             var added = 0
             repeat(maxPages) {
-                val url = "$API/$REPO/commits?sha=$MAIN_BRANCH&until=${iso8601(cursor)}&per_page=100&page=$page"
+                val url = "$API/$FEED_REPO/commits?sha=$MAIN_BRANCH&until=${iso8601(cursor)}&per_page=100&page=$page"
                 val result =
                     runCatching {
                         get(url, Freshness.Revalidate)?.let {
@@ -446,7 +446,7 @@ class GitHubRepository(
     private fun fetch(windowStartEpochSeconds: Long, freshness: Freshness): Fetched {
         val since = iso8601(windowStartEpochSeconds)
         val commits =
-            get("$API/$REPO/commits?sha=$MAIN_BRANCH&since=$since&per_page=100", freshness)?.let {
+            get("$API/$FEED_REPO/commits?sha=$MAIN_BRANCH&since=$since&per_page=100", freshness)?.let {
                 json.decodeFromString<List<GhCommit>>(it)
             } ?: throw IllegalStateException("commits unavailable")
 
@@ -456,17 +456,8 @@ class GitHubRepository(
                 .getOrNull()
 
         val total = runCatching { fetchTotalCommits() }.getOrDefault(0L)
-        // Best effort: the ranking loses the upstream half of itself rather than the feed losing
-        // everything, so a failure here is an empty list and not an exception.
-        val upstream =
-            runCatching {
-                    get("$API/$UPSTREAM_REPO/commits?sha=$MAIN_BRANCH&since=$since&per_page=100", freshness)?.let {
-                        json.decodeFromString<List<GhCommit>>(it)
-                    }
-                }
-                .getOrNull()
-                .orEmpty()
-        return Fetched(commits, repo, total, upstream)
+        // Activity is intentionally limited to this fork's master branch.
+        return Fetched(commits, repo, total, emptyList())
     }
 
     /**
@@ -479,7 +470,7 @@ class GitHubRepository(
     private fun fetchTotalCommits(): Long {
         val request =
             Request.Builder()
-                .url("$API/$REPO/commits?sha=$MAIN_BRANCH&per_page=1")
+                .url("$API/$FEED_REPO/commits?sha=$MAIN_BRANCH&per_page=1")
                 .header("Accept", "application/vnd.github+json")
                 .build()
         client.newCall(request).execute().use { response ->
@@ -972,6 +963,7 @@ class GitHubRepository(
 
     companion object {
         private const val MAIN_BRANCH = "master"
+        private const val FEED_REPO = "pingranQi/Aevix"
         const val OWNER = "LxyaoX"
         const val REPO = "$OWNER/Aevix"
         const val REPO_URL = "https://github.com/$REPO"
