@@ -980,14 +980,12 @@ class GitHubRepository(
         const val DISCUSSIONS_URL = "$REPO_URL/discussions"
 
         /**
-         * The repository this one is built on, whose commits are counted but not listed.
+         * The maintainer's fork whose master-branch commits are added to the activity feed.
          *
-         * Its history is this repository's history: every commit upstream had at the fork point is
-         * an ancestor here and arrives through both requests, which is why the merge below keys by
-         * SHA. What it adds is the commits made upstream *after* that point -- real work by the
-         * people this project is made of, in a feed that would otherwise stop noticing them.
+         * This is deliberately separate from [REPO]: it makes work pushed to the development fork
+         * visible alongside commits published on the canonical project repository.
          */
-        const val UPSTREAM_REPO = "JingMatrix/Vector"
+        const val UPSTREAM_REPO = "pingranQi/Aevix"
 
         /**
          * Everyone whose commits are this project's own work rather than a contribution to it.
