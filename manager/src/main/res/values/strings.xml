@@ -394,8 +394,6 @@
     <string name="report_title">Before you report</string>
     <string name="report_step_canary">Try the latest canary first</string>
     <string name="report_step_canary_body">It may already be fixed, and a debug build is what maintainers need to help you. Stay on master — pull-request builds are unstable.</string>
-    <string name="report_step_zygisk">Not on Magisk? Update Zygisk</string>
-    <string name="report_step_zygisk_body">Flash the latest Zygisk implementation, in its debug build if one exists.</string>
     <string name="report_step_logs">Attach logs</string>
     <string name="report_step_logs_body">A report without logs is a conversation that starts over. This writes both logs to a zip you can attach.</string>
     <string name="report_step_crashed">If Zygisk crashed</string>
