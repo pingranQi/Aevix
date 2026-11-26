@@ -236,8 +236,6 @@
     <string name="report_title">報告する前に</string>
     <string name="report_step_canary">まず最新の Canary を試す</string>
     <string name="report_step_canary_body">すでに修正されている可能性があり、メンテナが問題を調査や支援をするにはデバッグビルドが必要です。master ブランチを使い続けてください (プルリクエストのビルドは不安定なため)。</string>
-    <string name="report_step_zygisk">Magisk 以外をお使いですか？ Zygisk を更新してください</string>
-    <string name="report_step_zygisk_body">最新の Zygisk 実装をフラッシュしてください。デバッグビルドが存在する場合は、それを使用してください。</string>
     <string name="report_step_logs">ログを添付</string>
     <string name="report_step_logs_body">ログのないバグレポートは、最初からやり直す会話のようなものです。この処理では、添付可能な ZIP ファイルに両方のログが書き出されます。</string>
     <string name="report_step_crashed">Zygisk がクラッシュした場合</string>
