@@ -972,14 +972,6 @@ class GitHubRepository(
         const val DISCUSSIONS_URL = "$REPO_URL/discussions"
 
         /**
-         * The maintainer's fork whose master-branch commits are added to the activity feed.
-         *
-         * This is deliberately separate from [REPO]: it makes work pushed to the development fork
-         * visible alongside commits published on the canonical project repository.
-         */
-        const val UPSTREAM_REPO = "pingranQi/Aevix"
-
-        /**
          * Everyone whose commits are this project's own work rather than a contribution to it.
          *
          * A fork continues its upstream, so the maintainer there is not an outside co-author; with
