@@ -351,7 +351,7 @@ class GitHubRepository(
 
             var added = 0
             repeat(maxPages) {
-                val url = "$API/$REPO/commits?until=${iso8601(cursor)}&per_page=100&page=$page"
+                val url = "$API/$REPO/commits?sha=$MAIN_BRANCH&until=${iso8601(cursor)}&per_page=100&page=$page"
                 val result =
                     runCatching {
                         get(url, Freshness.Revalidate)?.let {
@@ -446,7 +446,7 @@ class GitHubRepository(
     private fun fetch(windowStartEpochSeconds: Long, freshness: Freshness): Fetched {
         val since = iso8601(windowStartEpochSeconds)
         val commits =
-            get("$API/$REPO/commits?since=$since&per_page=100", freshness)?.let {
+            get("$API/$REPO/commits?sha=$MAIN_BRANCH&since=$since&per_page=100", freshness)?.let {
                 json.decodeFromString<List<GhCommit>>(it)
             } ?: throw IllegalStateException("commits unavailable")
 
@@ -460,7 +460,7 @@ class GitHubRepository(
         // everything, so a failure here is an empty list and not an exception.
         val upstream =
             runCatching {
-                    get("$API/$UPSTREAM_REPO/commits?since=$since&per_page=100", freshness)?.let {
+                    get("$API/$UPSTREAM_REPO/commits?sha=$MAIN_BRANCH&since=$since&per_page=100", freshness)?.let {
                         json.decodeFromString<List<GhCommit>>(it)
                     }
                 }
@@ -479,7 +479,7 @@ class GitHubRepository(
     private fun fetchTotalCommits(): Long {
         val request =
             Request.Builder()
-                .url("$API/$REPO/commits?per_page=1")
+                .url("$API/$REPO/commits?sha=$MAIN_BRANCH&per_page=1")
                 .header("Accept", "application/vnd.github+json")
                 .build()
         client.newCall(request).execute().use { response ->
@@ -971,6 +971,7 @@ class GitHubRepository(
             .getOrDefault(0L)
 
     companion object {
+        private const val MAIN_BRANCH = "master"
         const val OWNER = "LxyaoX"
         const val REPO = "$OWNER/Aevix"
         const val REPO_URL = "https://github.com/$REPO"
@@ -1006,7 +1007,7 @@ class GitHubRepository(
          */
         const val CANARY_URL =
             "$REPO_URL/actions/workflows/core.yml" +
-                "?query=event%3Apush+branch%3Amaster+is%3Acompleted"
+                "?query=event%3Apush+branch%3A$MAIN_BRANCH+is%3Acompleted"
         private const val CANARY_TAG_PREFIX = "canary-"
 
         /**
