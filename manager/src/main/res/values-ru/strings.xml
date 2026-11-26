@@ -248,8 +248,6 @@
     <string name="report_title">Прежде чем сообщать</string>
     <string name="report_step_canary">Сначала попробуйте свежую canary-сборку</string>
     <string name="report_step_canary_body">Возможно, это уже исправлено, а сопровождающим для помощи нужна отладочная сборка. Берите сборки из master — сборки из pull request нестабильны.</string>
-    <string name="report_step_zygisk">Не Magisk? Обновите Zygisk</string>
-    <string name="report_step_zygisk_body">Прошейте свежую реализацию Zygisk, по возможности отладочную.</string>
     <string name="report_step_logs">Приложите журналы</string>
     <string name="report_step_logs_body">Отчёт без журналов — это разговор с начала. Здесь оба журнала записываются в zip, который можно приложить.</string>
     <string name="report_step_crashed">Если Zygisk упал</string>
